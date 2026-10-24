@@ -76,6 +76,16 @@ select.field{font-weight:600;padding-right:38px;background-image:linear-gradient
 .seg::-webkit-scrollbar,.chips::-webkit-scrollbar{display:none}
 .seg .btn{padding:8px 15px;font-size:14px}
 .chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin:12px -16px 0;padding:2px 16px}
+/* búsqueda con botón de borrar y aviso de filtro */
+.searchbox{position:relative}
+.searchbox .field{padding-right:52px}
+.searchbox .field::-webkit-search-cancel-button{-webkit-appearance:none;display:none}
+.clearbtn{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:32px;height:32px;border-radius:50%;border:0;background:var(--ink);color:var(--inv);cursor:pointer;display:grid;place-items:center;padding:0}
+.clearbtn svg{width:14px;height:14px}
+.filterbar{display:flex;align-items:center;gap:12px;margin-top:14px;padding:10px 10px 10px 16px;border-radius:999px;background:var(--soft)}
+.filterbar p{margin:0;flex:1;min-width:0;font-size:14px;line-height:1.3}
+.filterbar p b{font-family:var(--mono);font-weight:500;color:var(--accent)}
+.filterbar .btn{padding:7px 14px;font-size:13.5px;flex:none}
 .chip{flex:none;border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:6px 13px;font-size:13.5px;cursor:pointer;white-space:nowrap}
 .chip b{font-family:var(--mono);font-weight:400;font-size:12px;color:var(--muted);margin-left:6px}
 .chip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
@@ -206,7 +216,10 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
     <h1 class="title">Mi colección<span class="n" id="colCount"></span></h1>
     <p class="meta" id="colMeta"></p>
     <div class="controls">
-      <input class="field" id="colSearch" type="search" placeholder="Buscar en tu colección" autocomplete="off" enterkeyhint="search">
+      <div class="searchbox">
+        <input class="field" id="colSearch" type="search" placeholder="Buscar en tu colección" autocomplete="off" enterkeyhint="search">
+        <button class="clearbtn" id="colClear" type="button" aria-label="Borrar búsqueda" hidden><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 3l8 8M11 3l-8 8"/></svg></button>
+      </div>
       <div class="seg" id="sortSeg" role="group" aria-label="Ordenar por">
         <button class="btn" data-sort="artist">Artista</button>
         <button class="btn" data-sort="year">Año</button>
@@ -216,6 +229,7 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
       </div>
     </div>
     <div class="chips" id="genreChips"></div>
+    <div class="filterbar" id="filterBar" hidden><p id="filterText"></p><button class="btn solid" id="btnShowAll" type="button">Ver todos</button></div>
     <div id="colList"></div>
   </section>
 
@@ -509,7 +523,15 @@ function renderCol() {
       '<div class="empty-state"><p>Tu colección está vacía. Sumá tu primer disco buscándolo en Discogs.</p><button class="btn accent" data-go="add">Sumar un disco</button></div>';
     return;
   }
-  if (!list.length) { out.innerHTML = '<div class="empty-state"><p>Ningún disco coincide con “' + esc(S.q) + '”.</p></div>'; return; }
+  // aviso de filtro activo
+  const qShown = S.q.trim(), active = !!(qShown || S.genre);
+  $("#colClear").hidden = !S.q;
+  $("#filterBar").hidden = !active;
+  if (active) {
+    $("#filterText").innerHTML = "<b>" + list.length + "</b> de " + n + " discos" +
+      (qShown ? " con “" + esc(qShown) + "”" : "") + (S.genre ? " en " + esc(S.genre) : "");
+  }
+  if (!list.length) { out.innerHTML = '<div class="empty-state"><p>Ningún disco coincide con ese filtro.</p></div>'; return; }
 
   if (S.sort === "covers") {
     list.sort(byArtist);
@@ -913,6 +935,8 @@ $("#setupForm").addEventListener("submit", async e => {
 });
 
 $("#colSearch").addEventListener("input", e => { S.q = e.target.value; renderCol(); });
+$("#colClear").addEventListener("click", () => { S.q = ""; $("#colSearch").value = ""; renderCol(); $("#colSearch").focus(); });
+$("#btnShowAll").addEventListener("click", () => { S.q = ""; S.genre = null; $("#colSearch").value = ""; renderCol(); $("#genreChips").scrollLeft = 0; });
 $("#sortSeg").addEventListener("click", e => {
   const b = e.target.closest("[data-sort]"); if (!b) return;
   S.sort = b.dataset.sort; store.set("sort", S.sort); renderCol();
