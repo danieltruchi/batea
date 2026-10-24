@@ -86,6 +86,7 @@ select.field{font-weight:600;padding-right:38px;background-image:linear-gradient
 .filterbar p{margin:0;flex:1;min-width:0;font-size:14px;line-height:1.3}
 .filterbar p b{font-family:var(--mono);font-weight:500;color:var(--accent)}
 .filterbar .btn{padding:7px 14px;font-size:13.5px;flex:none}
+.syncbar{margin:0 0 16px;border-radius:var(--r-card);border-left:4px solid var(--accent)}
 .chip{flex:none;border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:6px 13px;font-size:13.5px;cursor:pointer;white-space:nowrap}
 .chip b{font-family:var(--mono);font-weight:400;font-size:12px;color:var(--muted);margin-left:6px}
 .chip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
@@ -215,6 +216,7 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
   <section id="vCol" class="wrap" hidden>
     <h1 class="title">Mi colección<span class="n" id="colCount"></span></h1>
     <p class="meta" id="colMeta"></p>
+    <div class="filterbar syncbar" id="syncBar" hidden><p id="syncText"></p><button class="btn accent" id="btnSyncFix" type="button"></button></div>
     <div class="controls">
       <div class="searchbox">
         <input class="field" id="colSearch" type="search" placeholder="Buscar en tu colección" autocomplete="off" enterkeyhint="search">
@@ -264,6 +266,7 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
 "use strict";
 
 /* ---------- utilidades ---------- */
+const APP_VERSION = "1.3";
 const API = "https://api.discogs.com";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -286,7 +289,7 @@ const S = {
   over: store.get("over", {}),       // release_id -> género elegido a mano
   sort: store.get("sort", "artist"),
   lastSync: store.get("lastSync", 0),
-  genre: null, q: "", tab: "col", syncing: false
+  genre: null, q: "", tab: "col", syncing: false, syncErr: ""
 };
 
 /* ---------- Discogs API (máx. ~55 pedidos por minuto) ---------- */
@@ -413,7 +416,22 @@ function setStatus(msg) {
   statusMsg = msg || "";
   const el = $("#status");
   if (statusMsg) { el.textContent = statusMsg; el.classList.add("busy"); }
-  else { el.classList.remove("busy"); el.textContent = S.lastSync ? "Al día con Discogs" : ""; }
+  else {
+    el.classList.remove("busy");
+    el.textContent = S.syncErr === "token" ? "Token rechazado" : S.syncErr === "net" ? "Sin conexión" : (S.lastSync ? "Al día con Discogs" : "");
+  }
+  renderSyncBar();
+}
+function renderSyncBar() {
+  const bar = $("#syncBar"); if (!bar) return;
+  bar.hidden = !S.syncErr;
+  if (S.syncErr === "token") {
+    $("#syncText").textContent = "Discogs no aceptó tu token, así que esto puede estar desactualizado.";
+    $("#btnSyncFix").textContent = "Cargar token nuevo";
+  } else if (S.syncErr === "net") {
+    $("#syncText").textContent = "No se pudo conectar con Discogs. Ves lo último que se guardó.";
+    $("#btnSyncFix").textContent = "Reintentar";
+  }
 }
 
 async function sync(manual) {
@@ -434,9 +452,10 @@ async function sync(manual) {
     S.lastSync = Date.now(); store.set("lastSync", S.lastSync);
     renderCol();
     if (S.tab === "add") renderAdd();
+    S.syncErr = "";
     if (manual) toast("Tu colección está al día");
   } catch (e) {
-    toast(e.status === 401 || e.status === 403 ? "Discogs no aceptó el token. Revisalo en Ajustes." : e.message);
+    S.syncErr = e.status === 401 || e.status === 403 ? "token" : "net";
   }
   S.syncing = false;
   setStatus("");
@@ -775,6 +794,7 @@ function openSettings() {
   sheet(
     '<h2 class="d-title">Ajustes</h2>' +
     '<p class="d-artist">Conectado a Discogs como <strong>' + esc(S.user) + "</strong>.</p>" +
+    '<p class="hint" style="margin-top:6px;font-family:var(--mono)">Batea v' + APP_VERSION + "</p>" +
     '<p class="hint" style="margin-top:12px">Batea y tu colección de Discogs son espejo: lo que sumes o quites acá cambia allá, y al revés. Los géneros que elijas a mano se guardan solo en este teléfono' + (n ? " (tenés " + n + ")" : "") + ".</p>" +
     '<div class="d-actions">' +
       '<button class="btn solid big" id="sSync">Sincronizar ahora</button>' +
@@ -979,7 +999,32 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && S.token && Date.now() - S.lastSync > 120000) sync();
 });
 
+/* ---------- versión y actualización automática ---------- */
+let lastVerCheck = 0;
+async function checkUpdate() {
+  if (Date.now() - lastVerCheck < 60000) return;
+  lastVerCheck = Date.now();
+  try {
+    const r = await fetch(location.pathname + "?check=" + Date.now(), {cache: "no-store"});
+    if (!r.ok) return;
+    const m = (await r.text()).match(/const APP_VERSION = "([^"]+)"/);
+    if (!m || m[1] === APP_VERSION) return;
+    if (store.get("updTried", "") === m[1]) return; // ya se intentó, no entrar en bucle
+    store.set("updTried", m[1]);
+    toast("Actualizando Batea…");
+    setTimeout(() => location.replace(location.pathname + "?v=" + encodeURIComponent(m[1])), 900);
+  } catch (e) {}
+}
+$("#btnSyncFix").addEventListener("click", () => {
+  if (S.syncErr === "token") {
+    ["token", "user", "items", "lastSync"].forEach(store.del);
+    location.replace(location.pathname);
+  } else sync(true);
+});
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") checkUpdate(); });
+
 /* ---------- arranque ---------- */
+checkUpdate();
 if (S.token && S.user) { showApp(); sync(); }
 else { $("#vSetup").hidden = false; }
 })();
