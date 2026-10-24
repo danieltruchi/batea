@@ -95,6 +95,18 @@ select.field{font-weight:600;padding-right:38px;background-image:linear-gradient
 .rec .t{font-weight:700;font-size:14.5px;line-height:1.2;letter-spacing:-.01em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .rec .a{font-size:13.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:-4px}
 .rec .y{font-family:var(--mono);font-size:12px}
+/* vista Tapas */
+.tapas{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:22px}
+@media (min-width:600px){.tapas{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}}
+.tp{appearance:none;border:0;padding:0;margin:0;background:var(--soft);aspect-ratio:1;border-radius:12px;overflow:hidden;cursor:pointer;position:relative;display:block;width:100%}
+.tp img{width:100%;height:100%;object-fit:cover;display:block}
+.tp.empty::after{content:"";position:absolute;inset:34%;border-radius:50%;background:var(--accent)}
+/* escáner */
+.or{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:13.5px;margin:22px 0 14px}
+.or::before,.or::after{content:"";flex:1;height:1px;background:var(--line)}
+.scanbox{position:relative;border-radius:20px;overflow:hidden;background:#000;aspect-ratio:3/4;max-height:58vh;width:100%;margin:14px auto 0}
+.scanbox video{width:100%;height:100%;object-fit:cover;display:block}
+.scanbox i{position:absolute;left:8%;right:8%;top:38%;height:24%;border:3px solid var(--accent);border-radius:16px;box-shadow:0 0 0 999px rgba(0,0,0,.35);pointer-events:none}
 .empty-state{border:1px dashed var(--line);border-radius:var(--r-card);padding:28px 20px;margin-top:24px;text-align:center}
 .empty-state p{margin:0 0 14px;color:var(--muted)}
 
@@ -200,6 +212,7 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
         <button class="btn" data-sort="year">Año</button>
         <button class="btn" data-sort="genre">Género</button>
         <button class="btn" data-sort="added">Recientes</button>
+        <button class="btn" data-sort="covers">Tapas</button>
       </div>
     </div>
     <div class="chips" id="genreChips"></div>
@@ -209,9 +222,11 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
   <!-- sumar -->
   <section id="vAdd" class="wrap" hidden>
     <h1 class="title">Sumar un disco</h1>
-    <p class="meta">Buscá el álbum por nombre y año original, después elegí tu edición exacta.</p>
+    <p class="meta">Escaneá el código de barras de la contratapa o buscá el álbum por nombre, y elegí tu edición exacta.</p>
+    <button class="btn accent big" id="btnScan" type="button">Escanear código de barras</button>
+    <div class="or">o buscá por nombre</div>
     <form class="form" id="addForm" autocomplete="off">
-      <input class="field" id="addQ" type="search" placeholder="Artista o disco" enterkeyhint="search" required>
+      <input class="field" id="addQ" type="search" placeholder="Artista, disco o código" enterkeyhint="search" required>
       <input class="field" id="addY" type="number" inputmode="numeric" placeholder="Año" min="1900" max="2100">
       <button class="btn solid big" type="submit">Buscar en Discogs</button>
     </form>
@@ -496,6 +511,14 @@ function renderCol() {
   }
   if (!list.length) { out.innerHTML = '<div class="empty-state"><p>Ningún disco coincide con “' + esc(S.q) + '”.</p></div>'; return; }
 
+  if (S.sort === "covers") {
+    list.sort(byArtist);
+    out.innerHTML = '<div class="tapas">' + list.map(it =>
+      '<button class="tp' + (it.img ? "" : " empty") + '" data-iid="' + it.iid + '" aria-label="' + esc(it.title + ", " + it.artist) + '">' +
+      (it.img ? '<img loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="" src="' + esc(it.img) + '">' : "") + "</button>").join("") + "</div>";
+    return;
+  }
+
   let groups;
   if (S.sort === "added") {
     list.sort((a, b) => String(b.added).localeCompare(String(a.added)));
@@ -572,10 +595,20 @@ const ownedMids = () => new Set(S.items.map(i => i.mid).filter(Boolean));
 const thumb = src => '<div class="th">' + (src && !/spacer\.gif/.test(src) ? '<img loading="lazy" referrerpolicy="no-referrer" alt="" src="' + esc(src) + '">' : "") + "</div>";
 
 async function search(kind) {
-  A.mode = "results"; A.loading = true; A.err = ""; A.results = []; A.kind = kind || "master";
+  A.mode = "results"; A.loading = true; A.err = ""; A.results = []; A.kind = kind || "master"; A.byCode = false;
   renderAdd();
   try {
     let d;
+    if (A.kind === "barcode") {
+      A.kind = "release"; A.byCode = true;
+      d = await api("/database/search", {params: {barcode: A.q, type: "release", per_page: 50}});
+      const vinylFirst = r => (r.format || []).includes("Vinyl") ? 0 : 1;
+      A.results = (d.results || []).sort((a, b) => vinylFirst(a) - vinylFirst(b));
+      A.loading = false;
+      renderAdd();
+      if (A.results.length === 1) openRelease(A.results[0].id, 0);
+      return;
+    }
     if (A.kind === "master") {
       d = await api("/database/search", {params: {q: A.q, type: "master", year: A.y, per_page: 40}});
       if (!(d.results || []).length) A.kind = "release";
@@ -619,7 +652,8 @@ function renderAdd() {
     if (A.err) { out.innerHTML = '<p class="err">' + esc(A.err) + "</p>"; return; }
     const om = ownedMids();
     let html = '<div class="list">';
-    if (!A.results.length) html += '<div class="empty-state"><p>Discogs no encontró “' + esc(A.q) + '”' + (A.y ? " de " + esc(A.y) : "") + ". Probá sin el año o con menos palabras.</p></div>";
+    if (!A.results.length && A.byCode) html += '<div class="empty-state"><p>Discogs no tiene ningún disco con el código ' + esc(A.q) + '. Probá buscarlo por nombre.</p></div>';
+    else if (!A.results.length) html += '<div class="empty-state"><p>Discogs no encontró “' + esc(A.q) + '”' + (A.y ? " de " + esc(A.y) : "") + ". Probá sin el año o con menos palabras.</p></div>";
     A.results.forEach((r, i) => {
       const [ar, ti] = splitTitle(r.title);
       const has = A.kind === "master" ? om.has(r.id) : own.has(r.id);
@@ -631,6 +665,7 @@ function renderAdd() {
         '</div><div class="yr">' + esc(r.year || "") + "</div></button>";
     });
     html += "</div>";
+    if (A.byCode && A.results.length) html = '<p class="hint" style="margin-top:18px">Ediciones con el código ' + esc(A.q) + '. Elegí la tuya.</p>' + html;
     if (A.kind === "master") html += '<p class="hint" style="margin-top:18px">¿No aparece? Algunos discos no están agrupados como álbum en Discogs.</p><button class="btn quiet" id="btnLoose" style="margin-top:10px">Buscar ediciones sueltas</button>';
     out.innerHTML = html;
     const loose = $("#btnLoose"); if (loose) loose.onclick = () => search("release");
@@ -672,6 +707,9 @@ async function openRelease(rid, masterYear) {
   try { r = await api("/releases/" + rid); }
   catch (e) { sheet('<p class="err">' + esc(e.message) + "</p>"); return; }
   const it = fromRelease(r, 0, 1);
+  if (!masterYear && r.master_id && !(r.master_id in S.years)) {
+    try { const m = await api("/masters/" + r.master_id); S.years[r.master_id] = +m.year || 0; store.set("years", S.years); } catch (e) {}
+  }
   const oy = masterYear || (r.master_id && S.years[r.master_id]) || 0;
   const copies = S.items.filter(i => i.rid === r.id).length;
   const lab = (r.labels || [])[0] || {};
@@ -731,6 +769,88 @@ function openSettings() {
   };
 }
 
+/* ---------- escáner de código de barras ---------- */
+const ZXING_URL = "https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js";
+let scanState = null, zxingLoading = null;
+function loadZXing() {
+  if (window.ZXing) return Promise.resolve();
+  if (!zxingLoading) zxingLoading = new Promise((res, rej) => {
+    const sc = document.createElement("script");
+    sc.src = ZXING_URL; sc.async = true;
+    sc.onload = () => window.ZXing ? res() : rej(new Error("x"));
+    sc.onerror = () => { zxingLoading = null; rej(new Error("x")); };
+    document.head.appendChild(sc);
+  });
+  return zxingLoading;
+}
+function stopScan() {
+  if (!scanState) return;
+  scanState.stopped = true;
+  clearTimeout(scanState.timer);
+  if (scanState.stream) scanState.stream.getTracks().forEach(t => t.stop());
+  scanState = null;
+}
+async function openScanner() {
+  stopScan();
+  const st = {stopped: false}; scanState = st;
+  sheet('<h2 class="d-title" style="margin-top:4px">Escanear</h2>' +
+    '<p class="hint">Apuntá la cámara al código de barras de la contratapa, dentro del recuadro.</p>' +
+    '<div class="scanbox"><video id="scanVideo" playsinline muted></video><i></i></div>' +
+    '<p class="hint" id="scanMsg" style="margin-top:12px">Abriendo la cámara…</p>');
+  const msg = t => { const el = $("#scanMsg"); if (el) el.textContent = t; };
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { msg("Este navegador no permite usar la cámara. Escribí el código en el buscador."); return; }
+  try { await loadZXing(); }
+  catch (e) { msg("No se pudo cargar el lector de códigos. Revisá tu conexión y probá de nuevo."); return; }
+  if (st.stopped) return;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: {ideal: "environment"}, width: {ideal: 1280}, height: {ideal: 720}}});
+  } catch (e) {
+    const n = e && e.name;
+    msg(n === "NotAllowedError" ? "Batea necesita permiso para usar la cámara. Activalo en Ajustes > Apps > Safari > Cámara y probá de nuevo."
+      : n === "NotFoundError" ? "No se encontró una cámara en este dispositivo."
+      : "No se pudo abrir la cámara. Cerrá esta ventana y probá de nuevo.");
+    return;
+  }
+  if (st.stopped) { stream.getTracks().forEach(t => t.stop()); return; }
+  st.stream = stream;
+  const video = $("#scanVideo");
+  video.srcObject = stream;
+  try { await video.play(); } catch (e) {}
+  const reader = new ZXing.MultiFormatReader();
+  const hints = new Map();
+  hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.EAN_13, ZXing.BarcodeFormat.EAN_8, ZXing.BarcodeFormat.UPC_A, ZXing.BarcodeFormat.UPC_E]);
+  hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+  reader.setHints(hints);
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d", {willReadFrequently: true});
+  msg("Buscando un código…");
+  const tick = () => {
+    if (st.stopped) return;
+    const w = video.videoWidth, h = video.videoHeight;
+    if (w && h) {
+      const k = Math.min(1, 1280 / w), cw = Math.round(w * k), ch = Math.round(h * k);
+      if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+      ctx.drawImage(video, 0, 0, cw, ch);
+      let code = "";
+      try {
+        const bmp = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(canvas)));
+        code = String(reader.decodeWithState(bmp).getText() || "").replace(/\D/g, "");
+      } catch (e) { /* todavía no hay código en cuadro */ }
+      if (code.length >= 8) {
+        if (navigator.vibrate) navigator.vibrate(60);
+        closeSheet();
+        $("#addQ").value = code; $("#addY").value = "";
+        A.q = code; A.y = "";
+        search("barcode");
+        return;
+      }
+    }
+    st.timer = setTimeout(tick, 200);
+  };
+  tick();
+}
+
 /* ---------- sheet y toast ---------- */
 let lastFocus = null;
 function sheet(html) {
@@ -745,6 +865,7 @@ function sheet(html) {
   }
 }
 function closeSheet() {
+  stopScan();
   $("#sheet").classList.remove("open"); $("#scrim").classList.remove("open");
   document.body.style.overflow = "";
   if (lastFocus && lastFocus.focus) lastFocus.focus({preventScroll: true});
@@ -809,7 +930,9 @@ $("#addForm").addEventListener("submit", e => {
   A.q = $("#addQ").value.trim(); A.y = $("#addY").value.trim();
   if (!A.q) return;
   document.activeElement && document.activeElement.blur();
-  search("master");
+  const digits = A.q.replace(/[\s-]/g, "");
+  if (/^\d{8,14}$/.test(digits)) { A.q = digits; A.y = ""; search("barcode"); }
+  else search("master");
 });
 $("#addOut").addEventListener("click", e => {
   const r = e.target.closest("[data-res]");
@@ -821,6 +944,8 @@ $("#addOut").addEventListener("click", e => {
   const v = e.target.closest("[data-ver]");
   if (v) openRelease(+v.dataset.ver, +A.master.year || 0);
 });
+$("#btnScan").addEventListener("click", openScanner);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && scanState) closeSheet(); });
 $("#tabs").addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) setTab(b.dataset.tab); });
 $("#btnSettings").addEventListener("click", openSettings);
 $("#sheetClose").addEventListener("click", closeSheet);
