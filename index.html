@@ -169,7 +169,7 @@ nav.tabs .btn{padding:13px 8px}
 /* tabs */
 nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:6;padding:10px 16px calc(10px + env(safe-area-inset-bottom,0px));background:color-mix(in srgb,var(--bg) 86%,transparent);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);border-top:1px solid var(--line);display:flex;gap:8px;justify-content:center}
 nav.tabs .btn{flex:1;max-width:230px;padding:13px}
-main{padding-bottom:120px}
+main{padding-bottom:120px;min-height:100vh;min-height:100lvh}
 
 /* sheet */
 .scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20;opacity:0;pointer-events:none;transition:opacity .2s}
@@ -192,6 +192,29 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
 .d-genre{margin-top:20px;display:flex;flex-direction:column;gap:8px}
 .d-genre label{font-size:13.5px;color:var(--muted)}
 .d-actions{display:flex;flex-direction:column;gap:10px;margin-top:24px}
+/* ficha compacta */
+.gsel{-webkit-appearance:none;appearance:none;font:inherit;font-size:14.5px;font-weight:600;color:var(--ink);border:1px solid var(--line);border-radius:999px;padding:5px 30px 5px 12px;max-width:100%;cursor:pointer;margin:-5px 0;
+  background-color:var(--bg);background-image:linear-gradient(45deg,transparent 50%,var(--ink) 50%),linear-gradient(135deg,var(--ink) 50%,transparent 50%);background-position:calc(100% - 17px) 55%,calc(100% - 12px) 55%;background-size:5px 5px;background-repeat:no-repeat}
+.related{margin-top:30px;border-top:1px solid var(--line);padding-top:16px}
+.related h3{margin:0 0 12px;font-size:15px;letter-spacing:-.01em}
+.relgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.rel{appearance:none;border:0;background:none;padding:0;text-align:left;cursor:pointer;min-width:0;display:flex;flex-direction:column;gap:5px}
+.rel .tp{pointer-events:none}
+.rel b{font-size:12px;line-height:1.2;font-weight:700;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.rel span{font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:-3px}
+.grab #sheetBack{margin-left:0;margin-right:auto}
+.havewant{display:inline-flex;gap:4px;padding:4px;border-radius:999px;background:var(--soft);margin-top:22px}
+.havewant button{appearance:none;border:0;background:none;font:inherit;font-weight:600;font-size:14.5px;color:var(--muted);padding:8px 16px;border-radius:999px;cursor:pointer}
+.havewant button b{font-family:var(--mono);font-weight:400;font-size:12px;margin-left:6px}
+.havewant button.on{background:var(--bg);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.havewant button.on b{color:var(--accent)}
+.badge.want{background:var(--ink);color:var(--inv)}
+.gauto{display:block;font-size:12px;color:var(--muted);margin-top:8px}
+.d-acts{display:flex;flex-direction:column;gap:8px;margin-top:24px}
+.d-acts .btn{padding:12px 16px}
+.d-row{display:flex;gap:8px}
+.d-row .btn{flex:1;min-width:0}
+.btn.quiet.redtext{color:var(--bad)}
 
 /* setup */
 .setup{padding-top:6vh}
@@ -238,7 +261,8 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
 
   <!-- colección -->
   <section id="vCol" class="wrap" hidden>
-    <h1 class="title">Mi colección<span class="n" id="colCount"></span></h1>
+    <div class="havewant" role="tablist" aria-label="Tengo o quiero"><button role="tab" data-mode="have">Tengo<b id="cntHave"></b></button><button role="tab" data-mode="want">Quiero<b id="cntWant"></b></button></div>
+    <h1 class="title" style="margin-top:14px"><span id="colTitle">Mi colección</span><span class="n" id="colCount"></span></h1>
     <p class="meta" id="colMeta"></p>
     <div class="filterbar syncbar" id="syncBar" hidden><p id="syncText"></p><button class="btn accent" id="btnSyncFix" type="button"></button></div>
     <div class="controls">
@@ -292,7 +316,7 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
 
 <div class="scrim" id="scrim"></div>
 <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Detalle">
-  <div class="grab"><button class="btn quiet" id="sheetClose">Cerrar</button></div>
+  <div class="grab"><button class="btn quiet" id="sheetBack" hidden>‹ Anterior</button><button class="btn quiet" id="sheetClose">Cerrar</button></div>
   <div id="sheetBody"></div>
 </div>
 <div class="toast" id="toast" role="status"></div>
@@ -301,7 +325,7 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
 "use strict";
 
 /* ---------- utilidades ---------- */
-const APP_VERSION = "1.7";
+const APP_VERSION = "1.9";
 const API = "https://api.discogs.com";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -325,7 +349,8 @@ const S = {
   sort: store.get("sort", "artist") === "covers" ? "artist" : store.get("sort", "artist"),
   view: store.get("view", store.get("sort", "") === "covers" ? "covers" : "list"),
   lastSync: store.get("lastSync", 0),
-  genre: null, q: "", tab: "col", syncing: false, syncErr: ""
+  genre: null, q: "", tab: "col", syncing: false, syncErr: "",
+  wants: store.get("wants", []), mode: "have", navStack: []
 };
 
 /* ---------- Discogs API (máx. ~55 pedidos por minuto) ---------- */
@@ -398,6 +423,10 @@ function fromCollection(ci) {
     img: b.cover_image || b.thumb || "", thumb: b.thumb || ""
   });
 }
+function fromWant(w) {
+  return Object.assign(fromCollection({id: w.id, instance_id: "w" + w.id, folder_id: 0, date_added: w.date_added, basic_information: w.basic_information}), {want: true});
+}
+const findAny = iid => S.items.find(i => String(i.iid) === String(iid)) || S.wants.find(i => String(i.iid) === String(iid));
 function fromRelease(r, iid, fid) {
   const img = (r.images || []).find(i => i.type === "primary") || (r.images || [])[0] || {};
   return Object.assign(base(r, r.artists, r.labels, r.formats), {
@@ -485,6 +514,15 @@ async function sync(manual) {
       page++;
     } while (page <= pages);
     S.items = all; persist();
+    try {
+      let wp = 1, wpages = 1; const ws = [];
+      do {
+        const d = await api(userPath() + "/wants", {params: {per_page: 100, page: wp}});
+        ws.push(...(d.wants || []).map(fromWant));
+        wpages = (d.pagination && d.pagination.pages) || 1; wp++;
+      } while (wp <= wpages);
+      S.wants = ws; store.set("wants", ws);
+    } catch (e) { if (e.status === 401 || e.status === 403) throw e; }
     S.lastSync = Date.now(); store.set("lastSync", S.lastSync);
     renderCol();
     if (S.tab === "add") renderAdd();
@@ -502,7 +540,7 @@ let filling = false;
 async function fillYears() {
   if (filling) return;
   filling = true;
-  const todo = [...new Set(S.items.filter(i => i.mid && !(i.mid in S.years)).map(i => i.mid))];
+  const todo = [...new Set(S.items.concat(S.wants).filter(i => i.mid && !(i.mid in S.years)).map(i => i.mid))];
   let done = 0;
   for (const mid of todo) {
     if (!S.token) break;
@@ -547,9 +585,14 @@ function card(it, i) {
 }
 
 function renderCol() {
-  const items = S.items;
+  const want = S.mode === "want";
+  const items = want ? S.wants : S.items;
   const n = items.length;
   $("#colCount").textContent = n ? n : "";
+  $("#colTitle").textContent = want ? "Lo que quiero" : "Mi colección";
+  $("#colSearch").placeholder = want ? "Buscar en tu lista" : "Buscar en tu colección";
+  $("#cntHave").textContent = S.items.length; $("#cntWant").textContent = S.wants.length;
+  document.querySelectorAll(".havewant [data-mode]").forEach(b => { b.classList.toggle("on", b.dataset.mode === S.mode); b.setAttribute("aria-selected", b.dataset.mode === S.mode); });
   if (n) {
     const artists = new Set(items.filter(i => i.sortArtist).map(i => fold(i.sortArtist))).size;
     const ys = items.map(origYear).filter(Boolean);
@@ -578,7 +621,7 @@ function renderCol() {
 
   const out = $("#colList");
   if (!n) {
-    out.innerHTML = S.syncing ? '<p class="loading">Trayendo tu colección de Discogs…</p>' :
+    out.innerHTML = want ? '<div class="empty-state"><p>Tu lista está vacía. Cuando busques o escanees un disco en Sumar, tocá <strong>Lo quiero</strong> y aparece acá.</p><button class="btn accent" data-go="add">Buscar un disco</button></div>' : S.syncing ? '<p class="loading">Trayendo tu colección de Discogs…</p>' :
       '<div class="empty-state"><p>Tu colección está vacía. Sumá tu primer disco buscándolo en Discogs.</p><button class="btn accent" data-go="add">Sumar un disco</button></div>';
     return;
   }
@@ -621,14 +664,54 @@ function renderCol() {
     '<div class="grid">' + arr.map(card).join("") + "</div></section>").join("");
 }
 
+/* ---------- relacionados ---------- */
+function relatedHTML(it) {
+  const myMoods = new Set(moodsOf(it)), myStyles = new Set(it.styles || []), g = genreOf(it), y = origYear(it);
+  const same = o => fold(o.artist) === fold(it.artist) && fold(o.title) === fold(it.title);
+  const scored = [];
+  S.items.forEach(o => {
+    if (o.iid === it.iid || same(o)) return;
+    let sc = 0;
+    moodsOf(o).forEach(m => { if (myMoods.has(m)) sc += 3; });
+    (o.styles || []).forEach(st => { if (myStyles.has(st)) sc += 1; });
+    if (genreOf(o) === g) sc += 2;
+    if (it.sortArtist && o.sortArtist === it.sortArtist) sc += 2;
+    const oy = origYear(o);
+    if (y && oy) sc += Math.abs(oy - y) <= 5 ? 2 : Math.abs(oy - y) <= 10 ? 1 : 0;
+    if (sc > 0) scored.push([sc, o]);
+  });
+  if (!scored.length) return "";
+  scored.sort((a, b) => b[0] - a[0]);
+  const pool = scored.slice(0, 16);
+  const pick = [], seenTitle = new Set();
+  let sameArtist = 0;
+  while (pick.length < 4 && pool.length) {
+    const total = pool.reduce((t, p) => t + p[0], 0);
+    let r = Math.random() * total, k = 0;
+    while (k < pool.length - 1 && (r -= pool[k][0]) > 0) k++;
+    const o = pool.splice(k, 1)[0][1];
+    const key = fold(o.artist + "|" + o.title);
+    if (seenTitle.has(key)) continue;
+    if (it.sortArtist && o.sortArtist === it.sortArtist) { if (sameArtist >= 2) continue; sameArtist++; }
+    seenTitle.add(key); pick.push(o);
+  }
+  return '<section class="related"><h3>' + (it.want ? "De tu colección, en la misma sintonía" : "Si te gusta este") + '</h3><div class="relgrid">' +
+    pick.map(o => '<button class="rel" data-rel="' + o.iid + '"><div class="tp' + (o.img ? "" : " empty") + '">' +
+      (o.img ? '<img loading="lazy" referrerpolicy="no-referrer" alt="" src="' + esc(o.img) + '">' : "") + "</div><b>" + esc(o.title) + "</b><span>" + esc(o.artist) + "</span></button>").join("") +
+    "</div></section>";
+}
+
 /* ---------- ficha de un disco de la colección ---------- */
-function openItem(iid) {
-  const it = S.items.find(i => String(i.iid) === String(iid));
+function openItem(iid, nav) {
+  const it = findAny(iid);
   if (!it) return;
+  if (nav === "push" && S.curItem && S.curItem !== String(iid)) S.navStack.push(S.curItem);
+  if (!nav) S.navStack = [];
+  S.curItem = String(iid);
   const y = origYear(it), auto = autoGenre(it), cur = S.over[it.rid] || "";
   const custom = [...new Set(Object.values(S.over))].filter(g => !GENRES.includes(g));
-  const opts = '<option value="">Automático: ' + esc(auto) + "</option>" +
-    GENRES.concat(custom).map(g => '<option value="' + esc(g) + '"' + (cur === g ? " selected" : "") + ">" + esc(g) + "</option>").join("") +
+  const opts = '<option value="">' + esc(auto) + "</option>" +
+    GENRES.concat(custom).filter(g => g !== auto || cur === g).map(g => '<option value="' + esc(g) + '"' + (cur === g ? " selected" : "") + ">" + esc(g) + "</option>").join("") +
     '<option value="__new">Otro género…</option>';
   const edition = it.year && it.year !== y ? "Esta edición es de " + it.year : (it.year ? "Edición original" : "");
   sheet(
@@ -641,14 +724,34 @@ function openItem(iid) {
       (it.catno ? '<dt>Catálogo</dt><dd class="mono">' + esc(it.catno) + "</dd>" : "") +
       (it.fmt ? '<dt>Formato</dt><dd class="mono">' + esc(it.fmt) + "</dd>" : "") +
       (it.styles.length ? "<dt>Estilos</dt><dd>" + esc(it.styles.join(", ")) + "</dd>" : "") +
+      '<dt><label for="genreSel">Género</label></dt><dd><select class="gsel" id="genreSel" aria-label="Género en Batea">' + opts + "</select>" +
+        (cur ? '<span class="gauto">Elegido a mano. El automático es ' + esc(auto) + ".</span>" : "") + "</dd>" +
     "</dl>" +
-    '<div class="d-genre"><label for="genreSel">Género en Batea</label><select class="field" id="genreSel">' + opts + "</select></div>" +
-    '<div class="d-actions">' +
-      '<a class="btn solid big" id="btnAM" href="' + esc(amSearchUrl(it)) + '" target="_blank" rel="noopener">Escuchar en Apple Music</a>' +
-      '<a class="btn quiet big" href="https://www.discogs.com/release/' + it.rid + '" target="_blank" rel="noopener">Ver la edición en Discogs</a>' +
-      '<button class="btn danger big" id="btnRemove">Quitar de mi colección</button>' +
-    "</div>"
+    '<div class="d-acts">' +
+      (it.want ? '<button class="btn accent" id="btnGotIt">Ya lo tengo</button>' : "") +
+      '<a class="btn solid" id="btnAM" href="' + esc(amSearchUrl(it)) + '" target="_blank" rel="noopener">Escuchar en Apple Music</a>' +
+      '<div class="d-row">' +
+        '<a class="btn quiet" href="https://www.discogs.com/release/' + it.rid + '" target="_blank" rel="noopener">Ver en Discogs</a>' +
+        '<button class="btn quiet redtext" id="btnRemove">' + (it.want ? "Sacar de la lista" : "Quitar") + "</button>" +
+      "</div>" +
+    "</div>" + relatedHTML(it)
   );
+  $("#sheet").scrollTop = 0;
+  $("#sheetBack").hidden = !S.navStack.length;
+  if (it.want) {
+    $("#btnGotIt").addEventListener("click", async e => {
+      const b = e.currentTarget; b.disabled = true; b.textContent = "Pasando a tu colección…";
+      try {
+        const d = await api(userPath() + "/collection/folders/1/releases/" + it.rid, {method: "POST"});
+        const item = Object.assign({}, it, {iid: d.instance_id, fid: 1, added: new Date().toISOString(), want: false});
+        delete item.want;
+        S.items.unshift(item); persist();
+        try { await api(userPath() + "/wants/" + it.rid, {method: "DELETE"}); } catch (x) {}
+        S.wants = S.wants.filter(w => w !== it); store.set("wants", S.wants);
+        closeSheet(); renderCol(); toast("“" + it.title + "” ya está en tu colección");
+      } catch (err) { b.disabled = false; b.textContent = "Ya lo tengo"; toast(err.message); }
+    });
+  }
   $("#genreSel").addEventListener("change", e => {
     let v = e.target.value;
     if (v === "__new") {
@@ -658,18 +761,28 @@ function openItem(iid) {
     if (v) S.over[it.rid] = v; else delete S.over[it.rid];
     store.set("over", S.over);
     renderCol();
-    openItem(iid);
+    openItem(iid, "same");
     toast("Género actualizado");
   });
   findAppleMusic(it).then(url => { const a = $("#btnAM"); if (url && a) a.href = url; });
   $("#btnRemove").addEventListener("click", async e => {
+    if (it.want) {
+      if (!confirm("¿Sacar “" + it.title + "” de tu lista? También se saca de tu Wantlist de Discogs.")) return;
+      const b = e.currentTarget; b.disabled = true;
+      try {
+        await api(userPath() + "/wants/" + it.rid, {method: "DELETE"});
+        S.wants = S.wants.filter(w => w !== it); store.set("wants", S.wants);
+        closeSheet(); renderCol(); toast("Sacado de tu lista");
+      } catch (err) { b.disabled = false; toast(err.message); }
+      return;
+    }
     if (!confirm("¿Quitar “" + it.title + "” de tu colección? También se quita en Discogs.")) return;
     const b = e.currentTarget; b.disabled = true; b.textContent = "Quitando…";
     try {
       await api(userPath() + "/collection/folders/" + it.fid + "/releases/" + it.rid + "/instances/" + it.iid, {method: "DELETE"});
       S.items = S.items.filter(i => i !== it); persist();
       closeSheet(); renderCol(); toast("Quitado de tu colección");
-    } catch (err) { b.disabled = false; b.textContent = "Quitar de mi colección"; toast(err.message); }
+    } catch (err) { b.disabled = false; b.textContent = "Quitar"; toast(err.message); }
   });
 }
 
@@ -770,7 +883,7 @@ function renderAdd() {
     '<div class="list" id="verList">';
   vs.forEach(v => {
     html += '<button class="row" data-ver="' + v.id + '">' + thumb(v.thumb) +
-      '<div><div class="l1">' + esc(v.country || "País sin dato") + (own.has(v.id) ? '<span class="badge">La tenés</span>' : "") + "</div>" +
+      '<div><div class="l1">' + esc(v.country || "País sin dato") + (own.has(v.id) ? '<span class="badge">La tenés</span>' : S.wants.some(w => w.rid === v.id) ? '<span class="badge want">La querés</span>' : "") + "</div>" +
       '<div class="l2">' + esc([v.label, v.catno].filter(Boolean).join(", ")) + "</div>" +
       '<div class="l3">' + esc(v.format || "") + "</div></div>" +
       '<div class="yr">' + esc(String(v.released || "").slice(0, 4) || "s/f") + "</div></button>";
@@ -816,6 +929,7 @@ async function openRelease(rid, masterYear) {
     '<div class="d-actions">' +
       (copies ? '<p class="hint">Ya tenés ' + (copies === 1 ? "esta edición" : copies + " copias de esta edición") + ".</p>" : "") +
       '<button class="btn accent big" id="btnAdd">' + (copies ? "Sumar otra copia" : "Sumar a mi colección") + "</button>" +
+      (S.wants.some(w => w.rid === r.id) ? '<p class="hint">Está en tu lista de deseos.</p>' : '<button class="btn solid big" id="btnWant">Lo quiero</button>') +
       '<a class="btn quiet big" href="https://www.discogs.com/release/' + r.id + '" target="_blank" rel="noopener">Ver la edición en Discogs</a>' +
     "</div>"
   );
@@ -826,10 +940,28 @@ async function openRelease(rid, masterYear) {
       const item = fromRelease(r, d.instance_id, 1);
       if (r.master_id && masterYear) { S.years[r.master_id] = masterYear; store.set("years", S.years); }
       S.items.unshift(item); persist();
+      const wasWanted = S.wants.some(w => w.rid === r.id);
+      if (wasWanted) {
+        try { await api(userPath() + "/wants/" + r.id, {method: "DELETE"}); } catch (x) {}
+        S.wants = S.wants.filter(w => w.rid !== r.id); store.set("wants", S.wants);
+      }
       closeSheet(); renderCol(); renderAdd();
-      toast("“" + item.title + "” sumado a tu colección");
+      toast("“" + item.title + "” sumado a tu colección" + (wasWanted ? " y sacado de tu lista" : ""));
       fillYears();
     } catch (err) { b.disabled = false; b.textContent = copies ? "Sumar otra copia" : "Sumar a mi colección"; toast(err.message); }
+  });
+  const bw = $("#btnWant");
+  if (bw) bw.addEventListener("click", async e => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = "Agregando…";
+    try {
+      await api(userPath() + "/wants/" + r.id, {method: "PUT"});
+      const w = Object.assign(fromRelease(r, "w" + r.id, 0), {want: true});
+      if (r.master_id && masterYear) { S.years[r.master_id] = masterYear; store.set("years", S.years); }
+      S.wants.unshift(w); store.set("wants", S.wants);
+      closeSheet(); renderCol(); renderAdd();
+      toast("“" + w.title + "” agregado a tu lista");
+      fillYears();
+    } catch (err) { b.disabled = false; b.textContent = "Lo quiero"; toast(err.message); }
   });
 }
 
@@ -1210,6 +1342,7 @@ let lastFocus = null;
 function sheet(html) {
   const sh = $("#sheet");
   $("#sheetBody").innerHTML = html;
+  $("#sheetBack").hidden = true;
   if (!sh.classList.contains("open")) {
     lastFocus = document.activeElement;
     sh.scrollTop = 0;
@@ -1220,6 +1353,7 @@ function sheet(html) {
 }
 function closeSheet() {
   stopScan();
+  S.navStack = []; S.curItem = null;
   $("#sheet").classList.remove("open"); $("#scrim").classList.remove("open");
   document.body.style.overflow = "";
   if (lastFocus && lastFocus.focus) lastFocus.focus({preventScroll: true});
@@ -1271,6 +1405,9 @@ $("#setupForm").addEventListener("submit", async e => {
 $("#colSearch").addEventListener("input", e => { S.q = e.target.value; renderCol(); });
 $("#colClear").addEventListener("click", () => { S.q = ""; $("#colSearch").value = ""; renderCol(); $("#colSearch").focus(); });
 $("#btnShowAll").addEventListener("click", () => { S.q = ""; S.genre = null; $("#colSearch").value = ""; renderCol(); $("#genreChips").scrollLeft = 0; });
+document.addEventListener("focusout", e => {
+  if (e.target.matches && e.target.matches("input, textarea, select")) setTimeout(() => window.scrollTo(window.scrollX, window.scrollY), 60);
+});
 $("#btnView").addEventListener("click", () => { S.view = S.view === "covers" ? "list" : "covers"; store.set("view", S.view); renderCol(); });
 $("#sortSeg").addEventListener("click", e => {
   const b = e.target.closest("[data-sort]"); if (!b) return;
@@ -1280,6 +1417,14 @@ $("#genreChips").addEventListener("click", e => {
   const b = e.target.closest("[data-genre]"); if (!b) return;
   S.genre = b.dataset.genre || null; renderCol();
 });
+document.querySelector(".havewant").addEventListener("click", e => {
+  const b = e.target.closest("[data-mode]"); if (!b || b.dataset.mode === S.mode) return;
+  S.mode = b.dataset.mode; S.genre = null; S.q = ""; $("#colSearch").value = ""; renderCol(); $("#genreChips").scrollLeft = 0;
+});
+$("#sheetBody").addEventListener("click", e => {
+  const r = e.target.closest("[data-rel]"); if (r) openItem(r.dataset.rel, "push");
+});
+$("#sheetBack").addEventListener("click", () => { const prev = S.navStack.pop(); if (prev) openItem(prev, "back"); });
 $("#colList").addEventListener("click", e => {
   const go = e.target.closest("[data-go]"); if (go) { setTab(go.dataset.go); return; }
   const b = e.target.closest("[data-iid]"); if (b) openItem(b.dataset.iid);
