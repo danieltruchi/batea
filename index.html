@@ -125,6 +125,11 @@ nav.tabs .btn{padding:13px 8px}
 .rec .a{font-size:13.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:-4px}
 .rec .y{font-family:var(--mono);font-size:12px}
 /* vista Tapas */
+.searchrow{display:flex;gap:8px;align-items:stretch}
+.searchrow .searchbox{flex:1;min-width:0}
+.viewbtn{flex:none;width:50px;border-radius:var(--r-field);border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer;display:grid;place-items:center;padding:0}
+.viewbtn svg{width:18px;height:18px}
+.viewbtn.on{background:var(--ink);border-color:var(--ink);color:var(--inv)}
 .tapas{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:22px}
 @media (min-width:600px){.tapas{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}}
 .tp{appearance:none;border:0;padding:0;margin:0;background:var(--soft);aspect-ratio:1;border-radius:12px;overflow:hidden;cursor:pointer;position:relative;display:block;width:100%}
@@ -209,7 +214,7 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
     <div class="status" id="status" aria-live="polite"></div>
     <button class="iconbtn" id="btnTheme" aria-label="Cambiar a modo oscuro"></button>
     <button class="iconbtn" id="btnSettings" aria-label="Ajustes" hidden>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg>
     </button>
   </div>
 </header>
@@ -237,16 +242,18 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
     <p class="meta" id="colMeta"></p>
     <div class="filterbar syncbar" id="syncBar" hidden><p id="syncText"></p><button class="btn accent" id="btnSyncFix" type="button"></button></div>
     <div class="controls">
+      <div class="searchrow">
       <div class="searchbox">
         <input class="field" id="colSearch" type="search" placeholder="Buscar en tu colección" autocomplete="off" enterkeyhint="search">
         <button class="clearbtn" id="colClear" type="button" aria-label="Borrar búsqueda" hidden><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 3l8 8M11 3l-8 8"/></svg></button>
+      </div>
+        <button class="viewbtn" id="btnView" type="button" aria-pressed="false"></button>
       </div>
       <div class="seg" id="sortSeg" role="group" aria-label="Ordenar por">
         <button class="btn" data-sort="artist">Artista</button>
         <button class="btn" data-sort="year">Año</button>
         <button class="btn" data-sort="genre">Género</button>
         <button class="btn" data-sort="added">Recientes</button>
-        <button class="btn" data-sort="covers">Tapas</button>
       </div>
     </div>
     <div class="chips" id="genreChips"></div>
@@ -294,7 +301,7 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
 "use strict";
 
 /* ---------- utilidades ---------- */
-const APP_VERSION = "1.5";
+const APP_VERSION = "1.7";
 const API = "https://api.discogs.com";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -315,7 +322,8 @@ const S = {
   items: store.get("items", []),
   years: store.get("years", {}),     // master_id -> año original
   over: store.get("over", {}),       // release_id -> género elegido a mano
-  sort: store.get("sort", "artist"),
+  sort: store.get("sort", "artist") === "covers" ? "artist" : store.get("sort", "artist"),
+  view: store.get("view", store.get("sort", "") === "covers" ? "covers" : "list"),
   lastSync: store.get("lastSync", 0),
   genre: null, q: "", tab: "col", syncing: false, syncErr: ""
 };
@@ -446,7 +454,7 @@ function setStatus(msg) {
   if (statusMsg) { el.textContent = statusMsg; el.classList.add("busy"); }
   else {
     el.classList.remove("busy");
-    el.textContent = S.syncErr === "token" ? "Token rechazado" : S.syncErr === "net" ? "Sin conexión" : (S.lastSync ? "Al día con Discogs" : "");
+    el.textContent = S.syncErr === "token" ? "Token rechazado" : S.syncErr === "net" ? "Sin conexión" : (S.lastSync ? "Al día" : "");
   }
   renderSyncBar();
 }
@@ -549,7 +557,11 @@ function renderCol() {
     $("#colMeta").textContent = n + " " + plural(n, "disco", "discos") + " de " + artists + " " + plural(artists, "artista", "artistas") + span + ".";
   } else $("#colMeta").textContent = "";
 
-  document.querySelectorAll("#sortSeg .btn").forEach(b => b.classList.toggle("on", b.dataset.sort === S.sort));
+  document.querySelectorAll("#sortSeg [data-sort]").forEach(b => b.classList.toggle("on", b.dataset.sort === S.sort));
+  const vb = $("#btnView"), cov = S.view === "covers";
+  vb.classList.toggle("on", cov); vb.setAttribute("aria-pressed", cov);
+  vb.setAttribute("aria-label", cov ? "Ver como lista" : "Ver solo tapas");
+  vb.innerHTML = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg>';
 
   // chips de género
   const counts = {};
@@ -580,8 +592,11 @@ function renderCol() {
   }
   if (!list.length) { out.innerHTML = '<div class="empty-state"><p>Ningún disco coincide con ese filtro.</p></div>'; return; }
 
-  if (S.sort === "covers") {
-    list.sort(byArtist);
+  if (S.view === "covers") {
+    if (S.sort === "added") list.sort((a, b) => String(b.added).localeCompare(String(a.added)));
+    else if (S.sort === "year") list.sort(byYear);
+    else if (S.sort === "genre") list.sort((a, b) => (genreOf(a) === "Otros") - (genreOf(b) === "Otros") || coll.compare(genreOf(a), genreOf(b)) || byArtist(a, b));
+    else list.sort(byArtist);
     out.innerHTML = '<div class="tapas">' + list.map(it =>
       '<button class="tp' + (it.img ? "" : " empty") + '" data-iid="' + it.iid + '" aria-label="' + esc(it.title + ", " + it.artist) + '">' +
       (it.img ? '<img loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="" src="' + esc(it.img) + '">' : "") + "</button>").join("") + "</div>";
@@ -838,12 +853,22 @@ function openSettings() {
         '<button class="btn quiet big" id="sImport">Pegar moods</button>' +
       "</div>" +
     "</div>" +
+    '<div class="fsec" style="border-top:1px solid var(--line);margin-top:22px;padding-top:16px">' +
+      '<h3 style="margin:0 0 6px;font-size:15px">Copia de seguridad</h3>' +
+      '<p class="hint" style="margin:0 0 12px">' + backupStatusText() + "</p>" +
+      '<div class="d-actions" style="margin-top:0">' +
+        '<button class="btn solid big" id="sBackup">Copiar copia de seguridad</button>' +
+        '<button class="btn quiet big" id="sRestore">Restaurar copia</button>' +
+      "</div>" +
+    "</div>" +
     '<div class="d-actions">' +
       '<button class="btn danger big" id="sOut">Desconectar Discogs</button>' +
     "</div>"
   );
   $("#sSync").onclick = () => { closeSheet(); sync(true); };
   $("#sExport").onclick = exportForClaude;
+  $("#sBackup").onclick = copyBackup;
+  $("#sRestore").onclick = openRestore;
   $("#sImport").onclick = openImport;
   $("#sYears").onclick = () => { S.years = {}; store.set("years", {}); closeSheet(); renderCol(); fillYears(); };
   $("#sOut").onclick = () => {
@@ -901,6 +926,59 @@ function autoMoods(it) {
 }
 const aiMoods = it => moodData.map[it.rid];
 const moodsOf = it => aiMoods(it) || autoMoods(it);
+/* ---------- copia de seguridad (moods y géneros a mano) ---------- */
+function backupStatusText() {
+  const nm = Object.keys(moodData.map || {}).length, ng = Object.keys(S.over).length;
+  const last = store.get("lastBackup", "");
+  const what = "Tus moods de Claude (" + nm + ") y los géneros que cambiaste a mano (" + ng + ") viven solo en este teléfono. Copiá la copia y guardala en Notas; si algún día se pierden, la pegás en Restaurar.";
+  return what + (last ? " Última copia: " + new Date(last).toLocaleDateString("es-AR") + "." : " Todavía no hiciste ninguna.");
+}
+function backupText() {
+  return "BATEA-BACKUP 1\n" + JSON.stringify({at: new Date().toISOString(), moods: moodData.map || {}, genres: S.over});
+}
+async function copyBackup() {
+  const text = backupText();
+  try {
+    await navigator.clipboard.writeText(text);
+    store.set("lastBackup", new Date().toISOString());
+    toast("Copia de seguridad copiada. Pegala en Notas.");
+    openSettings();
+  } catch (e) {
+    store.set("lastBackup", new Date().toISOString());
+    sheet('<h2 class="d-title" style="margin-top:4px">Copia de seguridad</h2><p class="hint">Tocá el texto, seleccioná todo, copialo y guardalo en Notas.</p>' +
+      '<textarea class="field" readonly style="margin-top:12px">' + esc(text) + "</textarea>");
+  }
+}
+function openRestore() {
+  sheet('<h2 class="d-title" style="margin-top:4px">Restaurar copia</h2>' +
+    '<p class="hint">Pegá acá la copia de seguridad, el texto que empieza con BATEA-BACKUP. Se suma a lo que ya tenés: no borra nada.</p>' +
+    '<textarea class="field" id="backupIn" style="margin-top:12px" placeholder="BATEA-BACKUP 1" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>' +
+    '<p class="err" id="backupErr" hidden></p>' +
+    '<div class="d-actions"><button class="btn accent big" id="btnRestore">Restaurar</button></div>');
+  $("#btnRestore").onclick = () => {
+    const err = m => { const e = $("#backupErr"); e.textContent = m; e.hidden = false; };
+    const txt = $("#backupIn").value || "";
+    const i = txt.indexOf("BATEA-BACKUP 1");
+    if (i < 0) { err("No encuentro la línea BATEA-BACKUP 1. Pegá la copia completa."); return; }
+    let data;
+    try { const raw = txt.slice(i + 14); data = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)); }
+    catch (e) { err("La copia está incompleta o cortada. Volvé a copiarla entera desde Notas."); return; }
+    const moods = {}, genres = {};
+    Object.entries(data.moods || {}).forEach(([rid, ms]) => {
+      const ok = (Array.isArray(ms) ? ms : []).filter(k => MOOD_KEYS.includes(k));
+      if (/^\d+$/.test(rid) && ok.length) moods[rid] = ok;
+    });
+    Object.entries(data.genres || {}).forEach(([rid, g]) => { if (/^\d+$/.test(rid) && typeof g === "string" && g.trim()) genres[rid] = g.trim().slice(0, 60); });
+    const nm = Object.keys(moods).length, ng = Object.keys(genres).length;
+    if (!nm && !ng) { err("La copia no tiene moods ni géneros para restaurar."); return; }
+    moodData = {v: 1, at: moodData.at || data.at || new Date().toISOString(), map: Object.assign({}, moodData.map, moods)};
+    store.set("moods", moodData);
+    S.over = Object.assign({}, S.over, genres); store.set("over", S.over);
+    closeSheet(); renderCol(); if (S.tab === "listen") renderListen();
+    toast("Restaurados " + nm + " moods y " + ng + " géneros");
+  };
+}
+
 function moodStatusText() {
   const n = S.items.length, ai = S.items.filter(aiMoods).length;
   if (!n) return "Todavía no hay discos.";
@@ -973,7 +1051,7 @@ function openImport() {
     if (!n) { err("El bloque no tiene discos de tu colección. Fijate que sea la respuesta a tu última copia."); return; }
     moodData = {v: 1, at: new Date().toISOString(), map: Object.assign({}, moodData.map, map)};
     store.set("moods", moodData);
-    closeSheet(); toast("Moods de " + n + " discos guardados");
+    closeSheet(); toast("Moods de " + n + " discos guardados. Hacé una copia de seguridad en Ajustes.");
     if (S.tab === "listen") renderListen();
   };
 }
@@ -1193,6 +1271,7 @@ $("#setupForm").addEventListener("submit", async e => {
 $("#colSearch").addEventListener("input", e => { S.q = e.target.value; renderCol(); });
 $("#colClear").addEventListener("click", () => { S.q = ""; $("#colSearch").value = ""; renderCol(); $("#colSearch").focus(); });
 $("#btnShowAll").addEventListener("click", () => { S.q = ""; S.genre = null; $("#colSearch").value = ""; renderCol(); $("#genreChips").scrollLeft = 0; });
+$("#btnView").addEventListener("click", () => { S.view = S.view === "covers" ? "list" : "covers"; store.set("view", S.view); renderCol(); });
 $("#sortSeg").addEventListener("click", e => {
   const b = e.target.closest("[data-sort]"); if (!b) return;
   S.sort = b.dataset.sort; store.set("sort", S.sort); renderCol();
