@@ -175,11 +175,18 @@ main{padding-bottom:110px;min-height:100vh;min-height:100lvh}
 .mhead{display:none}
 .more{margin-top:14px}
 
+/* ---------- marca chica fija arriba (aparece al scrollear Colección) ---------- */
+.minibar{position:fixed;left:0;right:0;top:0;z-index:11;background:var(--bg);border-bottom:1px solid var(--line);padding:calc(8px + env(safe-area-inset-top,0px)) 16px 8px;display:flex;justify-content:center;
+  opacity:0;transform:translateY(-8px);visibility:hidden;pointer-events:none;transition:opacity .2s,transform .2s,visibility .2s}
+.minibar.show{opacity:1;transform:none;visibility:visible}
+.minibar span{font-family:var(--display);font-size:26px;line-height:1;text-transform:uppercase;letter-spacing:-.01em;display:flex;align-items:flex-end}
+.minibar .dot{width:.165em;height:.165em;margin:0 0 .1em .05em}
+
 /* ---------- barra de abajo ---------- */
 nav.tabs{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--bg);border-top:1px solid var(--line);padding:8px max(16px,env(safe-area-inset-right,0px)) calc(10px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));display:flex;justify-content:space-between;align-items:center}
-nav.tabs button{appearance:none;border:0;background:none;padding:8px 0;cursor:pointer;font-family:var(--display);font-size:26px;line-height:1;text-transform:uppercase;color:var(--dim)}
+nav.tabs button{position:relative;appearance:none;border:0;background:none;padding:8px 0;cursor:pointer;font-family:var(--display);font-size:26px;line-height:1;text-transform:uppercase;color:var(--dim)}
 nav.tabs button.solid{color:var(--ink)}
-nav.tabs button.solid::after{content:".";color:var(--accent)}
+nav.tabs button.solid::after{content:".";color:var(--accent);position:absolute;left:100%;top:8px;pointer-events:none}
 
 /* ---------- ficha (sheet) ---------- */
 .scrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:20;opacity:0;pointer-events:none;transition:opacity .2s}
@@ -326,6 +333,8 @@ textarea.field{min-height:180px;font-family:ui-monospace,Menlo,monospace;font-si
   </section>
 </main>
 
+<div class="minibar" id="miniBar" aria-hidden="true"><span>Batea<span class="dot"></span></span></div>
+
 <nav class="tabs" id="tabs" hidden>
   <button type="button" data-tab="col">Colección</button>
   <button type="button" data-tab="listen">Escuchar</button>
@@ -343,7 +352,7 @@ textarea.field{min-height:180px;font-family:ui-monospace,Menlo,monospace;font-si
 "use strict";
 
 /* ---------- utilidades ---------- */
-const APP_VERSION = "2.0";
+const APP_VERSION = "2.0.1";
 const API = "https://api.discogs.com";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -504,7 +513,7 @@ function setStatus(msg) {
     el.classList.remove("busy");
     if (S.syncErr === "token") { l1 = "Token"; l2 = "rechazado"; }
     else if (S.syncErr === "net") { l1 = "Sin conexión"; l2 = "con Discogs"; }
-    else if (S.lastSync) { l1 = "Al día"; l2 = "con Discogs"; }
+    else if (S.lastSync) { l1 = "Sincronizado"; l2 = "con Discogs"; }
     else { l1 = "Buenos Aires"; l2 = "Batea"; }
   }
   el.innerHTML = esc(l1) + '<br><span class="muted">' + esc(l2) + "</span>";
@@ -602,10 +611,12 @@ function fitTitle(el, max) {
   el.style.fontSize = fitSize(el.textContent, max || 58, avail) + "px";
 }
 const cell = (k, v, cls) => '<div' + (cls ? ' class="' + cls + '"' : "") + '><div class="k">' + k + '</div><div class="v">' + (v ? esc(v) : "—") + "</div></div>";
-function yearRow(y, ed, lbl) {
+/* known: el año original es seguro (master consultado, o el disco no tiene master) */
+function yearRow(y, ed, lbl, known) {
   if (!y && !ed) return "";
+  const orig = known && y && ed && +y === +ed;
   return '<div class="yrow"><span class="yo">' + (y || ed) + '<span class="dot"></span></span><span class="ln"></span><span class="ye">' +
-    (ed ? (lbl || "Tu edición") + " <b>" + ed + "</b>" : "Año original") + "</span></div>";
+    (orig ? "Edición <b>original</b>" : ed ? (lbl || "Tu edición") + " <b>" + ed + "</b>" : "Año original") + "</span></div>";
 }
 function renderMast() {
   const L = $("#mastL"); if (!L) return;
@@ -775,7 +786,7 @@ function openItem(iid, nav) {
     '<div class="d-cover' + (it.img ? "" : " empty") + '">' + (it.img ? '<img referrerpolicy="no-referrer" alt="" src="' + esc(it.img) + '">' : "") + "</div>" +
     '<p class="d-artist">' + esc(it.artist) + "</p>" +
     '<h2 class="d-title" id="dTitle">' + esc(it.title) + "</h2>" +
-    yearRow(y, it.year, it.want ? "Esta edición" : "Tu edición") +
+    yearRow(y, it.year, it.want ? "Esta edición" : "Tu edición", it.mid ? !!S.years[it.mid] : true) +
     '<div class="dgrid">' +
       cell("Sello", it.label) + cell("Catálogo", it.catno) + cell("Formato", it.fmt) +
       cell("Estilos", (it.styles || []).join(", "), "span2") +
@@ -984,7 +995,7 @@ async function openRelease(rid, masterYear) {
     '<div class="d-cover' + (it.img ? "" : " empty") + '">' + (it.img ? '<img referrerpolicy="no-referrer" alt="" src="' + esc(it.img) + '">' : "") + "</div>" +
     '<p class="d-artist">' + esc(it.artist) + "</p>" +
     '<h2 class="d-title" id="dTitle">' + esc(it.title) + "</h2>" +
-    yearRow(oy || it.year, it.year, "Esta edición") +
+    yearRow(oy || it.year, it.year, "Esta edición", r.master_id ? !!oy : true) +
     '<div class="dgrid">' +
       cell("País", r.country) + cell("Salió", r.released) + cell("Formato", it.fmt) +
       cell("Sello", it.label) + cell("Catálogo", it.catno) + cell("Género", autoGenre(it)) +
@@ -1452,7 +1463,18 @@ function setTab(tab) {
   if (tab === "add") renderAdd();
   renderMast();
   window.scrollTo(0, 0);
+  updateMiniBar();
 }
+/* la marca chica aparece cuando BATEA gigante ya pasó por debajo de ella */
+let miniRaf = 0;
+function updateMiniBar() {
+  miniRaf = 0;
+  const bar = $("#miniBar"), hero = $("#vCol .hero");
+  const show = !$("#vCol").hidden && !!hero && hero.getBoundingClientRect().bottom < bar.offsetHeight;
+  bar.classList.toggle("show", show);
+}
+window.addEventListener("scroll", () => { if (!miniRaf) miniRaf = requestAnimationFrame(updateMiniBar); }, {passive: true});
+window.addEventListener("resize", updateMiniBar);
 function showApp() {
   $("#vSetup").hidden = true;
   $("#tabs").hidden = false;
