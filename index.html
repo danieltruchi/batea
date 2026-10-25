@@ -87,6 +87,24 @@ select.field{font-weight:600;padding-right:38px;background-image:linear-gradient
 .filterbar p b{font-family:var(--mono);font-weight:500;color:var(--accent)}
 .filterbar .btn{padding:7px 14px;font-size:13.5px;flex:none}
 .syncbar{margin:0 0 16px;border-radius:var(--r-card);border-left:4px solid var(--accent)}
+/* escuchar */
+.moods{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media (min-width:700px){.moods{grid-template-columns:repeat(3,1fr)}}
+.mood{appearance:none;text-align:left;border:1px solid var(--line);background:var(--bg);border-radius:var(--r-card);padding:14px 14px 12px;cursor:pointer;display:flex;flex-direction:column;gap:4px;min-height:96px}
+.mood b{font-size:16px;letter-spacing:-.015em;line-height:1.15}
+.mood span{font-size:13px;color:var(--muted);line-height:1.3}
+.mood i{font-style:normal;font-family:var(--mono);font-size:12px;color:var(--accent);margin-top:auto}
+.mood.on{background:var(--ink);border-color:var(--ink);color:var(--inv)}
+.mood.on span{color:inherit;opacity:.7}
+.mood.wide{grid-column:1/-1;min-height:0;flex-direction:row;align-items:center;justify-content:space-between;background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.mood.wide span{color:inherit;opacity:.85}
+.pick-head{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid var(--ink);padding-top:12px;margin:30px 0 14px}
+.pick-head h2{font-family:var(--display);font-size:24px;font-weight:700;text-transform:uppercase;letter-spacing:-.03em;line-height:1;margin:0}
+.pick-head .btn{padding:7px 14px;font-size:13.5px}
+.moodnote{font-size:13.5px;color:var(--muted);margin:14px 0 0}
+.moodnote button{appearance:none;border:0;background:none;padding:0;font:inherit;color:var(--ink);text-decoration:underline;cursor:pointer}
+textarea.field{min-height:180px;font-family:var(--mono);font-size:13px;line-height:1.4;resize:vertical}
+nav.tabs .btn{padding:13px 8px}
 .chip{flex:none;border:1px solid var(--line);background:var(--bg);border-radius:999px;padding:6px 13px;font-size:13.5px;cursor:pointer;white-space:nowrap}
 .chip b{font-family:var(--mono);font-weight:400;font-size:12px;color:var(--muted);margin-left:6px}
 .chip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
@@ -189,6 +207,7 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
   <div class="wrap topbar">
     <div class="logo"><i aria-hidden="true"></i>Batea</div>
     <div class="status" id="status" aria-live="polite"></div>
+    <button class="iconbtn" id="btnTheme" aria-label="Cambiar a modo oscuro"></button>
     <button class="iconbtn" id="btnSettings" aria-label="Ajustes" hidden>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
     </button>
@@ -248,10 +267,19 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
     </form>
     <div id="addOut"></div>
   </section>
+  <!-- escuchar -->
+  <section id="vListen" class="wrap" hidden>
+    <h1 class="title">Qué escucho</h1>
+    <p class="meta">Elegí un momento y Batea te sugiere discos de tu colección.</p>
+    <div class="moods" id="moodGrid"></div>
+    <p class="moodnote" id="moodNote"></p>
+    <div id="moodOut"></div>
+  </section>
 </main>
 
 <nav class="tabs" id="tabs" hidden>
   <button class="btn" data-tab="col">Colección</button>
+  <button class="btn" data-tab="listen">Escuchar</button>
   <button class="btn" data-tab="add">Sumar</button>
 </nav>
 
@@ -266,7 +294,7 @@ dl.info dd.mono{font-family:var(--mono);font-size:13px}
 "use strict";
 
 /* ---------- utilidades ---------- */
-const APP_VERSION = "1.4";
+const APP_VERSION = "1.5";
 const API = "https://api.discogs.com";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -801,10 +829,22 @@ function openSettings() {
     '<div class="d-actions">' +
       '<button class="btn solid big" id="sSync">Sincronizar ahora</button>' +
       '<button class="btn quiet big" id="sYears">Volver a buscar los años originales</button>' +
+    "</div>" +
+    '<div class="fsec" style="border-top:1px solid var(--line);margin-top:22px;padding-top:16px">' +
+      '<h3 style="margin:0 0 6px;font-size:15px">Moods con Claude</h3>' +
+      '<p class="hint" style="margin:0 0 12px">' + moodStatusText() + "</p>" +
+      '<div class="d-actions" style="margin-top:0">' +
+        '<button class="btn solid big" id="sExport">Copiar colección para Claude</button>' +
+        '<button class="btn quiet big" id="sImport">Pegar moods</button>' +
+      "</div>" +
+    "</div>" +
+    '<div class="d-actions">' +
       '<button class="btn danger big" id="sOut">Desconectar Discogs</button>' +
     "</div>"
   );
   $("#sSync").onclick = () => { closeSheet(); sync(true); };
+  $("#sExport").onclick = exportForClaude;
+  $("#sImport").onclick = openImport;
   $("#sYears").onclick = () => { S.years = {}; store.set("years", {}); closeSheet(); renderCol(); fillYears(); };
   $("#sOut").onclick = () => {
     if (!confirm("¿Desconectar Discogs de Batea? Tu colección sigue intacta en Discogs.")) return;
@@ -812,6 +852,154 @@ function openSettings() {
     location.reload();
   };
 }
+
+/* ---------- moods (Escuchar) ---------- */
+const MOODS = [
+  ["dia", "Arrancar el día", "Despertar lento, café."],
+  ["conc", "Concentrado", "Para trabajar sin que distraiga."],
+  ["aten", "Escucha atenta", "Un disco para darle play de punta a punta."],
+  ["fondo", "De fondo", "Que suene lindo sin pedir atención."],
+  ["dom", "Domingo", "Tiempo libre, sin apuro."],
+  ["noche", "Noche tarde", "Cuando la casa está en silencio."],
+  ["melan", "Melancolía linda", "Para estar un poco adentro."],
+  ["energ", "Subir la energía", "Para despabilarse."],
+  ["cantar", "Para cantar", "Los que te sabés de memoria."],
+  ["joyas", "Joyas escondidas", "Lo menos obvio de tu colección."]
+];
+const MOOD_KEYS = MOODS.map(m => m[0]);
+// moods provisorios: se deducen de los estilos de Discogs hasta que Claude los afine
+const MOOD_RULES = [
+  ["ambient, drone, new age, modern classical, minimal, berlin-school, dark ambient, field recording", "conc fondo noche"],
+  ["bossa nova, mpb, samba, tropicalia", "dia dom fondo"],
+  ["cool jazz, modal, smooth jazz, contemporary jazz, soul-jazz, latin jazz", "fondo dom noche"],
+  ["hard bop, bop, free jazz, spiritual jazz, post bop, avant-garde jazz", "aten noche"],
+  ["folk, acoustic, singer/songwriter, folk rock, chanson, nueva cancion, nueva trova", "dia dom melan"],
+  ["downtempo, trip hop, dream pop, shoegaze, slowcore, lo-fi, chillwave", "noche melan fondo"],
+  ["prog rock, psychedelic rock, krautrock, art rock, space rock, post rock, experimental", "aten noche"],
+  ["soul, funk, disco, boogie, house, deep house, electro, nu-disco, afrobeat, techno", "energ"],
+  ["punk, hardcore, post-punk, garage rock, hard rock, heavy metal, thrash, stoner rock, grunge", "energ"],
+  ["pop rock, synth-pop, new wave, britpop, power pop, ballad, vocal, europop, indie pop", "cantar energ"],
+  ["indie rock, alternative rock, emo", "dom melan cantar"],
+  ["tango, bolero, milonga", "melan noche"],
+  ["cumbia, salsa, merengue, cuarteto, son, guaracha", "energ cantar"],
+  ["reggae, dub, roots reggae, ska, rocksteady", "dom fondo"],
+  ["blues rock, electric blues, chicago blues, delta blues", "noche melan"],
+  ["boom bap, conscious, jazzy hip-hop, abstract, instrumental", "noche energ"]
+];
+const MOOD_IDX = {};
+MOOD_RULES.forEach(([styles, moods]) => styles.split(",").forEach(st => { const k = st.trim(); if (!(k in MOOD_IDX)) MOOD_IDX[k] = moods.split(" "); }));
+const GENRE_MOODS = {"Rock": "energ cantar", "Pop": "cantar", "Jazz": "fondo noche", "Clásica": "aten conc", "Electrónica": "energ", "Soul, funk y disco": "energ",
+  "Hip hop": "energ", "Ambient y experimental": "conc fondo", "Folk y cantautor": "dia dom", "Reggae y dub": "dom", "Blues": "noche", "Tango": "melan noche",
+  "Folklore": "dom melan", "Música brasileña": "dia dom", "Latina y tropical": "energ cantar", "Bandas sonoras": "conc aten", "Indie y alternativo": "dom melan",
+  "Psicodelia y prog": "aten noche", "Punk y post-punk": "energ", "New wave y synth": "energ cantar", "Metal": "energ", "Country": "dom"};
+let moodData = store.get("moods", {v: 1, at: "", map: {}});
+function autoMoods(it) {
+  const out = new Set();
+  for (const st of it.styles || []) (MOOD_IDX[String(st).toLowerCase()] || []).forEach(m => out.add(m));
+  if (!out.size) (GENRE_MOODS[genreOf(it)] || "").split(" ").filter(Boolean).forEach(m => out.add(m));
+  return [...out];
+}
+const aiMoods = it => moodData.map[it.rid];
+const moodsOf = it => aiMoods(it) || autoMoods(it);
+function moodStatusText() {
+  const n = S.items.length, ai = S.items.filter(aiMoods).length;
+  if (!n) return "Todavía no hay discos.";
+  if (!ai) return "Por ahora tus " + n + " discos tienen moods automáticos, deducidos de sus estilos. Para afinarlos, copiá tu colección, pegala en un chat con Claude y después pegá acá lo que te devuelva.";
+  if (ai === n) return "Los " + n + " discos tienen moods de Claude.";
+  return ai + " discos con moods de Claude y " + (n - ai) + " con moods automáticos (los que sumaste después). Cuando quieras, repetí la pasada con Claude.";
+}
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+let curMood = null;
+function renderListen() {
+  const counts = {};
+  S.items.forEach(it => moodsOf(it).forEach(m => { counts[m] = (counts[m] || 0) + 1; }));
+  $("#moodGrid").innerHTML = MOODS.map(([k, name, desc]) =>
+    '<button class="mood' + (curMood === k ? " on" : "") + '" data-mood="' + k + '"><b>' + esc(name) + "</b><span>" + esc(desc) + "</span><i>" + (counts[k] || 0) + " " + plural(counts[k] || 0, "disco", "discos") + "</i></button>").join("") +
+    '<button class="mood wide' + (curMood === "sorpresa" ? " on" : "") + '" data-mood="sorpresa"><b>Sorprendeme</b><span>Cualquiera de tus ' + S.items.length + "</span></button>";
+  const ai = S.items.filter(aiMoods).length, n = S.items.length;
+  $("#moodNote").innerHTML = n && ai < n ? (ai ? (n - ai) + " " + plural(n - ai, "disco tiene", "discos tienen") + " moods automáticos." : "Los moods son automáticos por ahora.") +
+    ' <button type="button" id="moodHow">Afinarlos con Claude</button>' : "";
+  const how = $("#moodHow"); if (how) how.onclick = openSettings;
+}
+function showMood(k) {
+  curMood = k;
+  const pool = k === "sorpresa" ? S.items : S.items.filter(it => moodsOf(it).includes(k));
+  const pick = shuffle(pool).slice(0, 6);
+  const name = k === "sorpresa" ? "Sorprendeme" : (MOODS.find(m => m[0] === k) || [])[1];
+  renderListen();
+  $("#moodOut").innerHTML = '<div class="pick-head"><h2>' + esc(name) + "</h2>" + (pool.length > 6 ? '<button class="btn quiet" id="btnAgain" type="button">Otra tanda</button>' : "") + "</div>" +
+    (pick.length ? '<div class="grid">' + pick.map(card).join("") + "</div>" : '<div class="empty-state"><p>Ningún disco tiene este mood todavía.</p></div>');
+  const again = $("#btnAgain"); if (again) again.onclick = () => showMood(k);
+  $("#moodOut").scrollIntoView({behavior: "smooth", block: "start"});
+}
+
+/* ---------- ida y vuelta con Claude ---------- */
+function exportText() {
+  const rows = S.items.slice().sort(byArtist).map(it =>
+    [it.rid, it.artist, it.title, origYear(it) || "", genreOf(it), (it.styles || []).join(", ")].map(v => String(v).replace(/[|\n]/g, " ")).join("|"));
+  return "Pedido de moods para Batea (v1).\n" +
+    "Asigná a cada disco entre 1 y 4 moods de esta lista, pensando en cómo se siente el disco completo. \"joyas\" es solo para los discos menos obvios de esta colección (no más de un 15%).\n" +
+    MOODS.map(m => m[0] + " = " + m[1] + " (" + m[2] + ")").join("\n") + "\n\n" +
+    "Respondé solo con un bloque de código que empiece con la línea BATEA-MOODS 1 y después una línea por disco, así: id:codigo,codigo\n\n" +
+    "Discos (" + rows.length + "). Formato: id|artista|disco|año original|género|estilos\n" + rows.join("\n");
+}
+async function exportForClaude() {
+  const text = exportText();
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Copiado. Pegalo en un chat con Claude.");
+  } catch (e) {
+    sheet('<h2 class="d-title" style="margin-top:4px">Copiar colección</h2><p class="hint">Tocá el texto, seleccioná todo y copialo.</p>' +
+      '<textarea class="field" readonly style="margin-top:12px">' + esc(text) + "</textarea>");
+  }
+}
+function openImport() {
+  sheet('<h2 class="d-title" style="margin-top:4px">Pegar moods</h2>' +
+    '<p class="hint">Pegá acá el bloque que te devolvió Claude, el que empieza con BATEA-MOODS.</p>' +
+    '<textarea class="field" id="moodsIn" style="margin-top:12px" placeholder="BATEA-MOODS 1" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>' +
+    '<p class="err" id="moodsErr" hidden></p>' +
+    '<div class="d-actions"><button class="btn accent big" id="btnMoodsSave">Guardar moods</button></div>');
+  $("#btnMoodsSave").onclick = () => {
+    const txt = $("#moodsIn").value || "";
+    const err = m => { const e = $("#moodsErr"); e.textContent = m; e.hidden = false; };
+    if (!/BATEA-MOODS\s*1/.test(txt)) { err("No encuentro la línea BATEA-MOODS 1. Copiá el bloque completo que te devolvió Claude."); return; }
+    const own = new Set(S.items.map(i => String(i.rid)));
+    const map = {}; let n = 0;
+    txt.split(/\n/).forEach(line => {
+      const m = line.match(/^\s*(\d+)\s*:\s*([a-z ,]+)/i); if (!m || !own.has(m[1])) return;
+      const ms = [...new Set(m[2].toLowerCase().split(/[\s,]+/).filter(k => MOOD_KEYS.includes(k)))];
+      if (ms.length) { map[m[1]] = ms; n++; }
+    });
+    if (!n) { err("El bloque no tiene discos de tu colección. Fijate que sea la respuesta a tu última copia."); return; }
+    moodData = {v: 1, at: new Date().toISOString(), map: Object.assign({}, moodData.map, map)};
+    store.set("moods", moodData);
+    closeSheet(); toast("Moods de " + n + " discos guardados");
+    if (S.tab === "listen") renderListen();
+  };
+}
+
+/* ---------- modo claro / oscuro ---------- */
+const ICON_MOON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>';
+const ICON_SUN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/></svg>';
+const sysDark = () => window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches;
+function applyTheme(t) {
+  const root = document.documentElement;
+  if (t === "dark" || t === "light") root.dataset.theme = t; else delete root.dataset.theme;
+  const dark = t ? t === "dark" : sysDark();
+  const b = $("#btnTheme");
+  b.innerHTML = dark ? ICON_SUN : ICON_MOON;
+  b.setAttribute("aria-label", dark ? "Cambiar a modo claro" : "Cambiar a modo oscuro");
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute("content", t ? (dark ? "#0a0a0a" : "#ffffff") : (m.media.includes("dark") ? "#0a0a0a" : "#ffffff")));
+}
+applyTheme(store.get("theme", ""));
+$("#btnTheme").addEventListener("click", () => {
+  const cur = document.documentElement.dataset.theme || (sysDark() ? "dark" : "light");
+  const next = cur === "dark" ? "light" : "dark";
+  store.set("theme", next); applyTheme(next);
+});
+if (window.matchMedia) matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(store.get("theme", "")));
+$("#moodGrid").addEventListener("click", e => { const b = e.target.closest("[data-mood]"); if (b) showMood(b.dataset.mood); });
+$("#moodOut").addEventListener("click", e => { const b = e.target.closest("[data-iid]"); if (b) openItem(b.dataset.iid); });
 
 /* ---------- Apple Music ---------- */
 // El botón arranca apuntando a la búsqueda de Apple Music; si el catálogo público de Apple
@@ -969,6 +1157,8 @@ function setTab(tab) {
   S.tab = tab;
   $("#vCol").hidden = tab !== "col";
   $("#vAdd").hidden = tab !== "add";
+  $("#vListen").hidden = tab !== "listen";
+  if (tab === "listen") renderListen();
   document.querySelectorAll("#tabs .btn").forEach(b => b.classList.toggle("solid", b.dataset.tab === tab));
   if (tab === "add") renderAdd();
   window.scrollTo(0, 0);
