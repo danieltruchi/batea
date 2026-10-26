@@ -257,6 +257,22 @@ textarea.field{min-height:180px;font-family:ui-monospace,Menlo,monospace;font-si
 
 .grab #sheetBack[hidden]{display:block!important;visibility:hidden}
 .related h3 em{font-style:normal}
+/* tracklist y créditos */
+.tl{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.tl li{display:grid;grid-template-columns:32px minmax(0,1fr) auto;gap:8px;align-items:baseline;padding:8px 0 7px;border-bottom:1px dotted var(--line);font-size:13.5px;line-height:1.3}
+.tl li:last-child{border-bottom:1px solid var(--line)}
+.tl .p{font-size:11px;color:var(--muted)}
+.tl .n{font-weight:500;overflow-wrap:anywhere}
+.tl .d{font-size:11.5px;font-variant-numeric:tabular-nums}
+.tl .x{display:block;font-size:11px;font-weight:400;color:var(--muted);margin-top:2px}
+.tl li.h{display:block;padding:14px 0 5px;border-bottom:1px solid var(--line);font-size:11px;font-weight:700}
+.tl li.sub{padding-left:40px}
+.cr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 10px;padding:2px 0 12px;border-bottom:1px solid var(--line)}
+.cr .k{font-size:10.5px;color:var(--muted)}
+.cr .v{font-size:12.5px;font-weight:700;margin-top:2px;overflow-wrap:anywhere}
+.cr .v small{font-size:10.5px;font-weight:400;color:var(--muted)}
+.cr .more{grid-column:1/-1;margin-top:0;justify-self:start}
+.extra .related:first-child{margin-top:22px}
 .meta{font-size:12.5px;color:var(--muted)}
 </style>
 </head>
@@ -357,7 +373,7 @@ textarea.field{min-height:180px;font-family:ui-monospace,Menlo,monospace;font-si
 "use strict";
 
 /* ---------- utilidades ---------- */
-const APP_VERSION = "2.0.2";
+const APP_VERSION = "2.0.3";
 const API = "https://api.discogs.com";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -775,6 +791,79 @@ function relatedHTML(it) {
     "</div></section>";
 }
 
+/* ---------- tracklist y créditos (de /releases/{id}) ---------- */
+const relCache = store.get("rel", {});   // release_id -> {t: temas, c: créditos}
+const nameOf = a => cleanName(a.anv || a.name);
+function compactRelease(r) {
+  const track = tr => ({p: tr.position || "", t: tr.title || "", d: tr.duration || "", ty: tr.type_ || "track",
+    a: tr.artists && tr.artists.length ? artistLine(tr.artists.map(a => Object.assign({}, a, {name: a.anv || a.name}))) : "",
+    s: (tr.sub_tracks || []).map(track)});
+  const c = [];
+  (r.extraartists || []).forEach(a => c.push([a.role || "", nameOf(a), a.tracks || ""]));
+  const walk = list => (list || []).forEach(tr => {
+    (tr.extraartists || []).forEach(a => c.push([a.role || "", nameOf(a), tr.position || ""]));
+    walk(tr.sub_tracks);
+  });
+  walk(r.tracklist);
+  return {t: (r.tracklist || []).map(track), c};
+}
+function cacheRelease(r) {
+  if (!r || !r.id) return null;
+  const data = compactRelease(r);
+  relCache[r.id] = data;
+  const keys = Object.keys(relCache);
+  if (keys.length > 500) keys.slice(0, keys.length - 500).forEach(k => delete relCache[k]);
+  store.set("rel", relCache);
+  return data;
+}
+function tracklistHTML(data) {
+  const rows = [];
+  let n = 0;
+  const row = (tr, sub) => {
+    n++;
+    rows.push('<li' + (sub ? ' class="sub"' : "") + '><span class="p">' + esc(tr.p) + '</span><span class="n">' + esc(tr.t) +
+      (tr.a ? '<span class="x">' + esc(tr.a) + "</span>" : "") + '</span><span class="d">' + esc(tr.d) + "</span></li>");
+  };
+  data.t.forEach(tr => {
+    if (tr.ty === "heading") { if (tr.t) rows.push('<li class="h">' + esc(tr.t) + "</li>"); return; }
+    if (tr.ty === "index") {
+      rows.push('<li><span class="p">' + esc(tr.p) + '</span><span class="n">' + esc(tr.t) + '</span><span class="d">' + esc(tr.d) + "</span></li>");
+      tr.s.forEach(st => row(st, true)); return;
+    }
+    row(tr);
+  });
+  if (!n) return "";
+  return '<section class="related"><h3><em>Tracklist</em><span>(' + pad2(n) + ')</span></h3><ol class="tl">' + rows.join("") + "</ol></section>";
+}
+function creditsHTML(data) {
+  if (!data.c.length) return "";
+  const byRole = new Map();
+  data.c.forEach(([role, name, tracks]) => {
+    if (!byRole.has(role)) byRole.set(role, []);
+    const list = byRole.get(role), prev = list.find(x => x[0] === name);
+    if (prev) { if (tracks && prev[1]) prev[1] += ", " + tracks; else prev[1] = ""; }
+    else list.push([name, tracks]);
+  });
+  const SHOW = 8, cells = [...byRole.entries()].map(([role, list], i) =>
+    "<div" + (i >= SHOW ? " hidden" : "") + '><div class="k">' + esc(role || "Créditos") + '</div><div class="v">' +
+    list.map(([nm, tr]) => esc(nm) + (tr ? " <small>" + esc(tr) + "</small>" : "")).join(", ") + "</div></div>");
+  return '<section class="related"><h3><em>Créditos</em><span>(' + pad2(byRole.size) + ')</span></h3><div class="cr">' + cells.join("") +
+    (cells.length > SHOW ? '<button class="btn more" type="button" data-allcr>Ver todos los créditos</button>' : "") + "</div></section>";
+}
+function fillExtra(el, data) {
+  if (!el || !el.isConnected) return;
+  const html = tracklistHTML(data) + creditsHTML(data);
+  el.innerHTML = html || '<p class="hint" style="margin-top:22px">Discogs no tiene tracklist ni créditos de esta edición.</p>';
+  const more = el.querySelector("[data-allcr]");
+  if (more) more.addEventListener("click", () => { el.querySelectorAll(".cr > div[hidden]").forEach(d => d.hidden = false); more.remove(); });
+}
+async function loadExtra(rid) {
+  const el = $("#dExtra"); if (!el) return;
+  if (relCache[rid]) { fillExtra(el, relCache[rid]); return; }
+  try { fillExtra(el, cacheRelease(await api("/releases/" + rid))); }
+  catch (e) { if (el.isConnected) el.innerHTML = '<p class="hint" style="margin-top:22px">No se pudo traer el tracklist y los créditos. Probá de nuevo con conexión.</p>'; }
+}
+
 /* ---------- ficha de un disco de la colección ---------- */
 function openItem(iid, nav) {
   const it = findAny(iid);
@@ -805,8 +894,10 @@ function openItem(iid, nav) {
         '<a class="btn" href="https://www.discogs.com/release/' + it.rid + '" target="_blank" rel="noopener">Ver en Discogs</a>' +
         '<button class="btn redtext" id="btnRemove">' + (it.want ? "Sacar de la lista" : "Quitar") + "</button>" +
       "</div>" +
-    "</div>" + relatedHTML(it)
+    "</div>" + relatedHTML(it) +
+    '<div class="extra" id="dExtra"><p class="loading" style="margin-top:22px">Trayendo tracklist y créditos</p></div>'
   );
+  loadExtra(it.rid);
   $("#sheetLabel").textContent = it.want ? "Lo que quiero" : "Ficha";
   fitTitle($("#dTitle"));
   $("#sheet").scrollTop = 0;
@@ -1011,8 +1102,9 @@ async function openRelease(rid, masterYear) {
       '<button class="btn accent big" id="btnAdd">' + (copies ? "Sumar otra copia" : "Sumar a mi colección") + "</button>" +
       (S.wants.some(w => w.rid === r.id) ? '<p class="d-note">Está en tu lista de deseos.</p>' : '<button class="btn solid big" id="btnWant">Lo quiero</button>') +
       '<a class="btn" href="https://www.discogs.com/release/' + r.id + '" target="_blank" rel="noopener">Ver la edición en Discogs</a>' +
-    "</div>"
+    "</div>" + '<div class="extra" id="dExtra"></div>'
   );
+  fillExtra($("#dExtra"), cacheRelease(r));
   $("#sheetLabel").textContent = "Edición";
   fitTitle($("#dTitle"));
   $("#btnAdd").addEventListener("click", async e => {
