@@ -58,6 +58,7 @@ main{padding-bottom:110px;min-height:100vh;min-height:100lvh}
 .havewant .on .u{text-decoration:none}
 /* respuesta al tocar */
 button:not(:disabled):active,a:active,select:active{opacity:.55}
+.status.calm{color:var(--muted)}
 .status.busy::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:5px;vertical-align:1px;animation:pulse 1s ease-in-out infinite alternate}
 @keyframes pulse{to{opacity:.25}}
 /* número flotante chiquito (no agranda la línea) */
@@ -76,6 +77,8 @@ button:not(:disabled):active,a:active,select:active{opacity:.55}
 .stats > :nth-child(2){text-align:center}
 .stats > :nth-child(3){text-align:right}
 .hint{color:var(--muted);font-size:12.5px;margin:0}
+.stale{display:flex;align-items:center;gap:6px;margin:0 0 6px;color:var(--accent);font-size:11.5px;font-weight:600;line-height:1.3}
+.stale::before{content:"";flex:none;width:6px;height:6px;border-radius:50%;background:var(--accent)}
 .err{color:var(--bad);font-size:13px;padding:10px 0;margin:0}
 .loading{font-size:12px;color:var(--muted);padding:16px 0;margin:0}
 .loading::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-right:7px;vertical-align:1px;animation:pulse .8s ease-in-out infinite alternate}
@@ -373,7 +376,7 @@ textarea.field{min-height:180px;font-family:ui-monospace,Menlo,monospace;font-si
 "use strict";
 
 /* ---------- utilidades ---------- */
-const APP_VERSION = "2.0.3";
+const APP_VERSION = "2.0.4";
 const API = "https://api.discogs.com";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -537,6 +540,7 @@ function setStatus(msg) {
     else if (S.lastSync) { l1 = "Sincronizado"; l2 = "con Discogs"; }
     else { l1 = "Buenos Aires"; l2 = "Batea"; }
   }
+  el.classList.toggle("calm", !statusMsg && !S.syncErr);
   el.innerHTML = esc(l1) + '<br><span class="muted">' + esc(l2) + "</span>";
   renderSyncBar();
 }
@@ -1154,7 +1158,7 @@ function openSettings() {
     "</div>" +
     '<div class="fsec" style="border-top:1px solid var(--line);margin-top:22px;padding-top:16px">' +
       '<h3 style="margin:0 0 6px;font-size:15px">Moods con Claude</h3>' +
-      '<p class="hint" style="margin:0 0 12px">' + moodStatusText() + "</p>" +
+      staleHTML(moodStaleText()) + '<p class="hint" style="margin:0 0 12px">' + moodStatusText() + "</p>" +
       '<div class="d-actions" style="margin-top:0">' +
         '<button class="btn solid big" id="sExport">Copiar colección para Claude</button>' +
         '<button class="btn quiet big" id="sImport">Pegar moods</button>' +
@@ -1162,7 +1166,7 @@ function openSettings() {
     "</div>" +
     '<div class="fsec" style="border-top:1px solid var(--line);margin-top:22px;padding-top:16px">' +
       '<h3 style="margin:0 0 6px;font-size:15px">Copia de seguridad</h3>' +
-      '<p class="hint" style="margin:0 0 12px">' + backupStatusText() + "</p>" +
+      staleHTML(backupStaleText()) + '<p class="hint" style="margin:0 0 12px">' + backupStatusText() + "</p>" +
       '<div class="d-actions" style="margin-top:0">' +
         '<button class="btn solid big" id="sBackup">Copiar copia de seguridad</button>' +
         '<button class="btn quiet big" id="sRestore">Restaurar copia</button>' +
@@ -1233,6 +1237,29 @@ function autoMoods(it) {
 }
 const aiMoods = it => moodData.map[it.rid];
 const moodsOf = it => aiMoods(it) || autoMoods(it);
+/* ---------- avisos de "desactualizado" en Ajustes ---------- */
+const staleHTML = t => t ? '<p class="stale">' + esc(t) + "</p>" : "";
+function moodStaleText() {
+  const n = S.items.length, miss = S.items.filter(it => !aiMoods(it)).length;
+  if (!n || !miss) return "";
+  return miss === n ? "Sin moods de Claude todavía" : "Desactualizado: " + miss + " " + plural(miss, "disco", "discos") + " sin moods de Claude";
+}
+/* huella del contenido de la copia, para saber si cambió algo desde la última */
+function backupSig() {
+  const t = JSON.stringify({m: moodData.map || {}, g: S.over});
+  let h = 5381; for (let i = 0; i < t.length; i++) h = (h * 33 + t.charCodeAt(i)) | 0;
+  return String(h >>> 0) + ":" + t.length;
+}
+const markBackup = () => { store.set("lastBackup", new Date().toISOString()); store.set("backupSig", backupSig()); };
+function backupStaleText() {
+  const nm = Object.keys(moodData.map || {}).length, ng = Object.keys(S.over).length;
+  if (!nm && !ng) return "";
+  if (!store.get("lastBackup", "")) return "Todavía no hiciste ninguna copia";
+  const sig = store.get("backupSig", "");
+  if (!sig) return "Hacé una copia nueva para quedar al día";
+  return sig === backupSig() ? "" : "Desactualizada: hubo cambios desde la última copia";
+}
+
 /* ---------- copia de seguridad (moods y géneros a mano) ---------- */
 function backupStatusText() {
   const nm = Object.keys(moodData.map || {}).length, ng = Object.keys(S.over).length;
@@ -1247,11 +1274,11 @@ async function copyBackup() {
   const text = backupText();
   try {
     await navigator.clipboard.writeText(text);
-    store.set("lastBackup", new Date().toISOString());
+    markBackup();
     toast("Copia de seguridad copiada. Pegala en Notas.");
     openSettings();
   } catch (e) {
-    store.set("lastBackup", new Date().toISOString());
+    markBackup();
     sheet('<h2 class="d-head">Copia de seguridad</h2><p class="hint">Tocá el texto, seleccioná todo, copialo y guardalo en Notas.</p>' +
       '<textarea class="field" readonly style="margin-top:12px">' + esc(text) + "</textarea>");
   }
