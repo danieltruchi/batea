@@ -376,7 +376,7 @@ textarea.field{min-height:180px;font-family:ui-monospace,Menlo,monospace;font-si
 "use strict";
 
 /* ---------- utilidades ---------- */
-const APP_VERSION = "2.0.4";
+const APP_VERSION = "2.0.5";
 const API = "https://api.discogs.com";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -894,6 +894,7 @@ function openItem(iid, nav) {
     '<div class="d-acts">' +
       (it.want ? '<button class="btn accent big" id="btnGotIt">Ya lo tengo</button>' : "") +
       '<a class="btn solid big" id="btnAM" href="' + esc(amSearchUrl(it)) + '" target="_blank" rel="noopener">Escuchar en Apple Music</a>' +
+      (it.want ? '<a class="btn quiet big" href="' + esc(mlSearchUrl(it)) + '" target="_blank" rel="noopener">Buscar en Mercado Libre</a>' : "") +
       '<div class="d-row">' +
         '<a class="btn" href="https://www.discogs.com/release/' + it.rid + '" target="_blank" rel="noopener">Ver en Discogs</a>' +
         '<button class="btn redtext" id="btnRemove">' + (it.want ? "Sacar de la lista" : "Quitar") + "</button>" +
@@ -1427,6 +1428,14 @@ $("#moodOut").addEventListener("click", e => { const b = e.target.closest("[data
 // encuentra el álbum exacto, el botón pasa a abrir ese álbum directamente.
 const amCache = store.get("am", {});
 const amClean = t => fold(t).replace(/\([^)]*\)|\[[^\]]*\]/g, " ").replace(/[^a-z0-9ñ]+/g, " ").trim();
+/* Mercado Libre: "artista disco vinilo", sin lo que va entre paréntesis ("Remastered", "Deluxe"…) */
+function mlSearchUrl(it) {
+  const title = String(it.title || "").replace(/\s*[\(\[][^\)\]]*[\)\]]/g, "").trim() || it.title;
+  const q = ((it.sortArtist ? it.artist + " " : "") + title + " vinilo")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return "https://listado.mercadolibre.com.ar/" + q;
+}
 const amSearchUrl = it => "https://music.apple.com/search?term=" + encodeURIComponent((it.sortArtist ? it.artist + " " : "") + it.title);
 function jsonp(url, ms) {
   return new Promise(res => {
