@@ -404,7 +404,7 @@ textarea.field{min-height:180px;font-family:ui-monospace,Menlo,monospace;font-si
 "use strict";
 
 /* ---------- utilidades ---------- */
-const APP_VERSION = "2.0.8";
+const APP_VERSION = "2.0.9";
 const API = "https://api.discogs.com";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -939,10 +939,32 @@ function notesPrompt(it, rel) {
   return lines.join("\n");
 }
 
+/* Pregunta a Google qué modelos habilita esta clave, en vez de adivinar nombres (cambian seguido). */
+async function geminiModels() {
+  const cache = store.get("gmodels", null);
+  if (cache && cache.k === aiKey().slice(-6) && Date.now() - cache.t < 864e5 && cache.list.length) return cache.list;
+  try {
+    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", {headers: {"x-goog-api-key": aiKey()}});
+    if (!r.ok) return NOTES_MODELS;
+    const data = await r.json();
+    const ver = n => { const m = n.match(/gemini-(\d+(?:\.\d+)?)/); return m ? parseFloat(m[1]) : 0; };
+    const list = (data.models || [])
+      .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
+      .map(m => String(m.name || "").replace(/^models\//, ""))
+      .filter(n => /^gemini-/.test(n) && /flash|pro/.test(n) && !/lite|image|tts|audio|live|embed|vision|thinking-exp|robotics|computer|native/.test(n))
+      .sort((x, y) => (/flash/.test(y) - /flash/.test(x)) || (ver(y) - ver(x)) || (/preview|exp/.test(x) - /preview|exp/.test(y)) || (x.length - y.length))
+      .slice(0, 5);
+    if (!list.length) return NOTES_MODELS;
+    store.set("gmodels", {k: aiKey().slice(-6), t: Date.now(), list});
+    return list;
+  } catch (e) { return NOTES_MODELS; }
+}
+
 async function askGemini(prompt) {
-  const last = store.get("gmodel", "");
-  const order = last ? [last, ...NOTES_MODELS.filter(m => m !== last)] : NOTES_MODELS;
-  let lastErr = null;
+  const avail = await geminiModels(), last = store.get("gmodel", "");
+  const order = last && avail.includes(last) ? [last, ...avail.filter(m => m !== last)] : avail;
+  const tried = [];   /* qué pasó con cada modelo, para poder diagnosticar */
+  let quota = false;
   for (const model of order) {
     let r;
     try {
@@ -953,32 +975,38 @@ async function askGemini(prompt) {
           systemInstruction: {parts: [{text: NOTES_SYSTEM}]},
           contents: [{role: "user", parts: [{text: prompt}]}],
           tools: [{google_search: {}}],
-          generationConfig: {temperature: 0.7, maxOutputTokens: 8192}
+          generationConfig: {temperature: 0.7, maxOutputTokens: 16384}
         })
       });
     } catch (e) { throw new Error("No se pudo conectar con Gemini. Revisá la conexión y probá de nuevo."); }
     let data = null; try { data = await r.json(); } catch (e) {}
     if (!r.ok) {
-      const msg = (data && data.error && data.error.message) || "";
+      const msg = (data && data.error && (data.error.message || data.error.status)) || "";
       if (r.status === 401) throw new Error("Google rechazó tu clave de Gemini. Borrala en AI Studio, creá una nueva y cargala de nuevo en Ajustes.");
       if (r.status === 400 && /api key/i.test(msg)) throw new Error("Google no aceptó tu clave de Gemini. Cargala de nuevo en Ajustes.");
-      if (r.status === 403) throw new Error("Tu clave de Gemini no tiene permiso. Revisá que la hayas creado en Google AI Studio con tu cuenta personal.");
-      /* modelo inexistente o sin cupo gratis: probar el siguiente */
-      if (r.status === 404 || r.status === 429) { lastErr = r.status; continue; }
-      if (r.status >= 500) throw new Error("Gemini está saturado en este momento. Probá en un rato.");
-      throw new Error("Gemini respondió con un error" + (msg ? ": " + msg : "."));
+      if (r.status === 403) throw new Error("Tu clave de Gemini no tiene permiso. Revisá que la API de Gemini esté habilitada en AI Studio.");
+      if (r.status >= 500) { tried.push(model + " " + r.status); continue; }
+      if (r.status === 429) quota = true;
+      tried.push(model + " " + r.status + (msg ? " " + msg.slice(0, 90) : ""));
+      continue;
     }
     const cand = data && data.candidates && data.candidates[0];
     const text = cand && cand.content && (cand.content.parts || []).filter(x => typeof x.text === "string" && !x.thought).map(x => x.text).join("").trim();
-    if (!text) { lastErr = "empty"; continue; }
+    if (!text) {
+      const why = (data && data.promptFeedback && data.promptFeedback.blockReason) || (cand && cand.finishReason) || "sin texto";
+      tried.push(model + " vacío (" + why + ")");
+      continue;
+    }
     store.set("gmodel", model);
     const gm = cand.groundingMetadata || {};
     const src = [], seen = new Set();
     (gm.groundingChunks || []).forEach(c => { const w = c.web; if (w && w.uri && !seen.has(w.title || w.uri) && src.length < 8) { seen.add(w.title || w.uri); src.push([w.uri, w.title || "Fuente"]); } });
     return {text, src, widget: (gm.searchEntryPoint && gm.searchEntryPoint.renderedContent) || ""};
   }
-  if (lastErr === 429) throw new Error("Llegaste al límite gratis de Gemini por hoy. Mañana se renueva.");
-  throw new Error("Gemini no devolvió las notas. Probá de nuevo en un rato.");
+  store.del("gmodels");
+  const err = new Error(quota && tried.every(t => / 429/.test(t)) ? "Llegaste al límite gratis de Gemini por hoy. Mañana se renueva." : "Gemini no devolvió las notas.");
+  err.detail = tried.join(" · ");
+  throw err;
 }
 
 function parseNotes(res) {
@@ -1074,12 +1102,14 @@ function showNotes(it, force) {
   }
   frame('<p class="n-kick">' + esc(it.artist) + " — " + esc(it.title) + '</p><h2 class="n-title">Notas de tapa</h2>' +
     '<p class="n-wait" data-rid="' + it.rid + '">Investigando y escribiendo. Tarda alrededor de un minuto.</p>' +
-    '<p class="hint" style="margin-top:8px">Podés cerrar esto y seguir escuchando: cuando vuelvas, va a estar lista.</p>');
+    '<p class="hint" id="nWaitHint" style="margin-top:8px">Podés cerrar esto y seguir escuchando: cuando vuelvas, va a estar lista.</p>');
   const waiting = () => document.querySelector('.n-wait[data-rid="' + it.rid + '"]');
   generateNotes(it).then(() => { if (waiting()) showNotes(it); })
     .catch(e => {
       const w = waiting(); if (!w) return;
+      if ($("#nWaitHint")) $("#nWaitHint").remove();
       w.outerHTML = '<p class="n-err">' + esc(e.message) + "</p>" +
+        (e.detail ? '<p class="hint" style="margin-top:6px;font-size:11px;overflow-wrap:anywhere">Detalle: ' + esc(e.detail) + "</p>" : "") +
         '<div class="d-actions"><button class="btn solid big" id="nRetry">Probar de nuevo</button></div>';
       $("#nRetry").addEventListener("click", () => showNotes(it, true));
     });
