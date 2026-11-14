@@ -205,10 +205,17 @@ button:not(:disabled):active,a:active,select:active{opacity:.55}
 .n-src h4{margin:0 0 6px;font-size:11px;font-weight:700;color:var(--muted)}
 .n-src a{display:block;font-size:11.5px;line-height:1.5;color:var(--muted);text-decoration:underline;text-decoration-thickness:1px;text-underline-offset:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .n-gs{display:block;width:100%;height:64px;border:0;margin-top:8px;background:transparent}
+.n-step{padding:18px 0 4px;border-top:1px dotted var(--line)}
+.n-lead + .n-step{border-top:0}
+.n-step h3{display:flex;align-items:baseline;gap:10px;margin:0 0 6px;font-family:var(--display);font-weight:400;font-size:22px;line-height:1;text-transform:uppercase}
+.n-step h3 span{color:var(--accent)}
+.n-step textarea.field{min-height:120px}
+.n-cur{list-style:none;margin:0;padding:0}
+.n-cur li{position:relative;padding:9px 0 8px 18px;border-bottom:1px dotted var(--line);font-size:14.5px;line-height:1.45}
+.n-cur li:last-child{border-bottom:0}
+.n-cur li::before{content:"";position:absolute;left:2px;top:16px;width:6px;height:6px;border-radius:50%;background:var(--accent)}
 .n-foot{margin-top:16px;padding-top:12px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);line-height:1.5}
 .n-foot button{appearance:none;border:0;background:none;padding:0;font:inherit;color:var(--ink);cursor:pointer}
-.n-wait{display:flex;align-items:center;gap:8px;margin:22px 0 0;font-size:14px}
-.n-wait::before{content:"";flex:none;width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1s ease-in-out infinite alternate}
 .n-err{margin:16px 0 0;color:var(--accent);font-size:13px;font-weight:600}
 
 /* ---------- marca chica fija arriba (aparece al scrollear Colección) ---------- */
@@ -404,7 +411,7 @@ textarea.field{min-height:180px;font-family:ui-monospace,Menlo,monospace;font-si
 "use strict";
 
 /* ---------- utilidades ---------- */
-const APP_VERSION = "2.0.10";
+const APP_VERSION = "2.1.0";
 const API = "https://api.discogs.com";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -896,200 +903,95 @@ async function loadExtra(rid) {
   catch (e) { if (el.isConnected) el.innerHTML = '<p class="hint" style="margin-top:22px">No se pudo traer el tracklist y los créditos. Probá de nuevo con conexión.</p>'; }
 }
 
-/* ---------- notas de tapa (Gemini + búsqueda de Google, con la clave gratis del usuario) ---------- */
-/* se prueba en orden; cada modelo tiene su propio cupo gratis, y el que funciona queda recordado */
-const NOTES_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-flash-latest", "gemini-2.5-flash"];
+/* ---------- notas de tapa: las escribe Claude en un chat, igual que los moods (copiar pedido → pegar respuesta) ---------- */
 const notesCache = store.get("notes", {});   // release_id -> nota ya escrita
-const notesPending = {};                        // release_id -> pedido en curso
-const aiKey = () => store.get("gkey", "");
-const NOTES_NOSEARCH = "\n\nEsta vez no tenés buscador: al final del pedido van las fuentes que juntó Batea. Todo dato concreto del disco, la banda y los temas tiene que salir de esas fuentes o de los datos de Discogs. Para el contexto de época podés sumar hechos muy conocidos y verificables, sin detalles dudosos. Si las fuentes no alcanzan para una sección, escribí: Sin datos confiables.";
-const NOTES_SYSTEM = [
-  "Sos un periodista de rock argentino con muchos años de oficio, de los que escribían notas de tapa y reseñas memorables. Escribís las notas de tapa de un disco para alguien que lo está escuchando ahora mismo en vinilo.",
-  "Castellano rioplatense, con voseo. Tono culto y cercano, con ritmo y pulso narrativo. Nada de clichés ni adjetivos vacíos (prohibido: icónico, atemporal, obra maestra, imprescindible, legendario). Sin emojis.",
-  "Método: antes de escribir, buscá en la web (Wikipedia en inglés y en castellano, entrevistas, reseñas, sitios especializados en música). Los datos de Discogs que te paso sirven para orientarte, pero no te limites a repetir créditos: contá qué aportó el productor, cómo y dónde se grabó, qué estaba viviendo la banda, cómo se recibió el disco y qué hay para descubrir en los temas.",
-  "Regla de oro: todo dato concreto (fechas, nombres, lugares, cifras, anécdotas) tiene que salir de lo que encontraste. No inventes citas textuales. Si algo es leyenda o hay versiones distintas, decilo así. Si el disco está poco documentado, escribí menos; nunca rellenes.",
-  "No uses markdown salvo los ## de cada sección: nada de negritas, asteriscos ni listas numeradas.",
-  "Formato exacto, sin nada antes ni después:",
-  "TITULO: una frase corta con gancho, de 8 palabras como máximo",
-  "BAJADA: una o dos oraciones que te metan en el disco",
-  "## El momento",
-  "Un párrafo de 60 a 110 palabras: dónde estaba la banda o el artista, qué venía de pasar, qué se jugaba con este disco.",
-  "## Cómo se hizo",
-  "Un párrafo: estudio, productor, decisiones, tensiones, accidentes felices.",
-  "## El contexto",
-  "Un párrafo: qué pasaba en la música y en el mundo ese año, y cómo cayó el disco.",
-  "## Escuchá atento",
-  "De 3 a 6 líneas, cada una así: - POSICIÓN | Nombre del tema | qué escuchar, en una o dos oraciones concretas (un instrumento, un arreglo, un detalle de la mezcla o de la letra, una historia del tema). Usá las posiciones exactas del tracklist que te paso.",
-  "## Una más",
-  "Una a tres oraciones con la curiosidad para contar en una cena.",
-  "Si una sección no tiene material confiable, escribí solamente: Sin datos confiables."
-].join("\n");
+["gkey", "gmodel", "gmodels", "gnosearch", "ckey"].forEach(store.del);   // restos de las versiones con clave
 
 function notesPrompt(it, rel) {
-  const lines = ["Disco: " + it.title, "Artista: " + it.artist, "Año original: " + (origYear(it) || "desconocido"),
+  const L = [];
+  L.push("Pedido de notas de tapa para Batea (mi app de vinilos). Es un pedido nuevo e independiente: no tiene nada que ver con otros pedidos de Batea.", "");
+  L.push("Sos un periodista de rock argentino con muchos años de oficio, de los que escribían notas de tapa y reseñas memorables. Escribí las notas de tapa de este disco para alguien que lo está escuchando ahora mismo en vinilo y quiere saber todo: el contexto, la historia, el detrás de escena, qué escuchar y las curiosidades.");
+  L.push("Castellano rioplatense, con voseo. Tono culto y cercano, con ritmo y pulso narrativo. Nada de clichés ni adjetivos vacíos (prohibido: icónico, atemporal, obra maestra, imprescindible, legendario). Sin emojis.", "");
+  L.push("Investigá en la web antes de escribir, a fondo: Wikipedia en inglés y castellano, entrevistas con la banda y el productor, reseñas de la época y retrospectivas, sitios especializados, notas de prensa. Los datos de Discogs de abajo sirven para orientarte, pero no te limites a repetir créditos: contá qué aportó el productor, dónde y cómo se grabó, qué equipos o técnicas se usaron, qué vivía la banda, cómo se recibió el disco, qué hay detrás de cada tema.");
+  L.push("Regla de oro: todo dato concreto (fechas, nombres, lugares, cifras, anécdotas) tiene que salir de lo que encontraste. No inventes citas textuales. Si algo es leyenda o hay versiones distintas, decilo así. Si el disco está poco documentado, escribí menos; nunca rellenes. Si una sección no tiene material confiable, escribí solamente: Sin datos confiables.", "");
+  L.push("DATOS DEL DISCO (Discogs)");
+  L.push("Disco: " + it.title, "Artista: " + it.artist, "Año original: " + (origYear(it) || "desconocido"),
     "Esta edición: " + (it.year || "s/d") + ", sello " + (it.label || "s/d") + ", formato " + (it.fmt || "s/d"),
-    "Estilos según Discogs: " + ((it.styles || []).join(", ") || "s/d")];
+    "Estilos: " + ((it.styles || []).join(", ") || "s/d"));
   if (rel && rel.t.length) {
     const tl = [];
     const add = tr => { if (tr.ty === "heading") return; if (tr.p || tr.t) tl.push((tr.p ? tr.p + " " : "") + tr.t + (tr.d ? " (" + tr.d + ")" : "")); tr.s.forEach(add); };
     rel.t.forEach(add);
-    lines.push("", "Tracklist:", ...tl);
+    L.push("", "Tracklist de esta edición:", ...tl);
   }
-  if (rel && rel.c.length) lines.push("", "Créditos de Discogs:", ...rel.c.slice(0, 60).map(([r, n, t]) => "- " + r + ": " + n + (t ? " (" + t + ")" : "")));
-  lines.push("", "Escribí las notas de tapa de este disco.");
-  return lines.join("\n");
+  if (rel && rel.c.length) L.push("", "Créditos:", ...rel.c.slice(0, 60).map(([r, n, t]) => "- " + r + ": " + n + (t ? " (" + t + ")" : "")));
+  L.push("", "FORMATO DE ENTREGA");
+  L.push("Respondé SOLO con un único bloque de código (```text), sin nada antes ni después, para que yo lo copie entero con un toque. Adentro, exactamente esta estructura, sin markdown extra (nada de negritas ni links con corchetes):", "");
+  L.push("BATEA-NOTAS 1 | " + it.rid,
+    "TITULO: una frase corta con gancho, de 8 palabras como máximo",
+    "BAJADA: una o dos oraciones que te metan en el disco",
+    "## El momento",
+    "Uno o dos párrafos: dónde estaba la banda o el artista, qué venía de pasar, qué se jugaba con este disco.",
+    "## Cómo se hizo",
+    "Uno o dos párrafos: estudio, productor y lo que aportó, decisiones, equipos, tensiones, accidentes felices.",
+    "## El contexto",
+    "Uno o dos párrafos: qué pasaba en la música y en el mundo ese año, cómo se recibió el disco y qué dejó.",
+    "## Escuchá atento",
+    "- POSICIÓN | Nombre del tema | qué escuchar: un instrumento, un arreglo, un detalle de la mezcla o de la letra, la historia del tema",
+    "(de 4 a 8 líneas así, con las posiciones exactas del tracklist de arriba)",
+    "## Curiosidades",
+    "- un dato suelto para contar en una cena",
+    "(de 3 a 6 líneas así)",
+    "## Fuentes",
+    "- Nombre del sitio o medio | https://link-completo",
+    "(una línea por fuente que usaste)");
+  return L.join("\n");
 }
 
-/* Pregunta a Google qué modelos habilita esta clave, en vez de adivinar nombres (cambian seguido). */
-async function geminiModels() {
-  const cache = store.get("gmodels", null);
-  if (cache && cache.k === aiKey().slice(-6) && Date.now() - cache.t < 864e5 && cache.list.length) return cache.list;
-  try {
-    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200", {headers: {"x-goog-api-key": aiKey()}});
-    if (!r.ok) return NOTES_MODELS;
-    const data = await r.json();
-    const ver = n => { const m = n.match(/gemini-(\d+(?:\.\d+)?)/); return m ? parseFloat(m[1]) : 0; };
-    const list = (data.models || [])
-      .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
-      .map(m => String(m.name || "").replace(/^models\//, ""))
-      .filter(n => /^gemini-/.test(n) && /flash|pro/.test(n) && !/image|tts|audio|live|embed|vision|thinking-exp|robotics|computer|native/.test(n))
-      .sort((x, y) => (/lite/.test(x) - /lite/.test(y)) || (/flash/.test(y) - /flash/.test(x)) || (ver(y) - ver(x)) || (/preview|exp/.test(x) - /preview|exp/.test(y)) || (x.length - y.length))
-      .slice(0, 7);
-    if (!list.length) return NOTES_MODELS;
-    store.set("gmodels", {k: aiKey().slice(-6), t: Date.now(), list});
-    return list;
-  } catch (e) { return NOTES_MODELS; }
-}
-
-/* ---- Wikipedia como fuente propia (gratis, sin clave): para cuando la búsqueda de Google no está en el plan gratis ---- */
-async function wikiExtract(lang, query, mustMatch) {
-  const base = "https://" + lang + ".wikipedia.org/w/api.php?format=json&origin=*&";
-  try {
-    const sr = await (await fetch(base + "action=query&list=search&srlimit=5&srsearch=" + encodeURIComponent(query))).json();
-    const hits = (sr.query && sr.query.search) || [];
-    const norm = t => String(t).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
-    const hit = hits.find(h => !mustMatch || norm(h.title).includes(norm(mustMatch)));
-    if (!hit) return null;
-    const ex = await (await fetch(base + "action=query&prop=extracts&explaintext=1&redirects=1&titles=" + encodeURIComponent(hit.title))).json();
-    const page = Object.values((ex.query && ex.query.pages) || {})[0];
-    if (!page || !page.extract) return null;
-    return {title: page.title, url: "https://" + lang + ".wikipedia.org/wiki/" + encodeURIComponent(page.title.replace(/ /g, "_")), text: page.extract.slice(0, 16000)};
-  } catch (e) { return null; }
-}
-async function wikiSources(it) {
-  const album = String(it.title).replace(/\s*[\(\[][^\)\]]*[\)\]]/g, "").trim();
-  const artist = it.sortArtist ? it.artist : "";
-  const q = (artist + " " + album + " album").trim();
-  const [en, es, ar] = await Promise.all([
-    wikiExtract("en", q, album), wikiExtract("es", q, album),
-    artist ? wikiExtract("en", artist + " band musician", artist) : null
-  ]);
-  return [en, es, ar].filter(Boolean);
-}
-
-async function callGemini(model, prompt, withSearch) {
-  let r;
-  try {
-    r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent", {
-      method: "POST",
-      headers: {"content-type": "application/json", "x-goog-api-key": aiKey()},
-      body: JSON.stringify(Object.assign({
-        systemInstruction: {parts: [{text: NOTES_SYSTEM + (withSearch ? "" : NOTES_NOSEARCH)}]},
-        contents: [{role: "user", parts: [{text: prompt}]}],
-        generationConfig: {temperature: 0.7, maxOutputTokens: 16384}
-      }, withSearch ? {tools: [{google_search: {}}]} : {}))
-    });
-  } catch (e) { throw new Error("No se pudo conectar con Gemini. Revisá la conexión y probá de nuevo."); }
-  let data = null; try { data = await r.json(); } catch (e) {}
-  if (!r.ok) {
-    const msg = (data && data.error && (data.error.message || data.error.status)) || "";
-    if (r.status === 401) throw new Error("Google rechazó tu clave de Gemini. Borrala en AI Studio, creá una nueva y cargala de nuevo en Ajustes.");
-    if (r.status === 400 && /api key/i.test(msg)) throw new Error("Google no aceptó tu clave de Gemini. Cargala de nuevo en Ajustes.");
-    if (r.status === 403) throw new Error("Tu clave de Gemini no tiene permiso. Revisá que la API de Gemini esté habilitada en AI Studio.");
-    return {fail: model + (withSearch ? " (con búsqueda) " : " ") + r.status + (msg ? " " + msg.slice(0, 160) : ""), status: r.status};
-  }
-  const cand = data && data.candidates && data.candidates[0];
-  const text = cand && cand.content && (cand.content.parts || []).filter(x => typeof x.text === "string" && !x.thought).map(x => x.text).join("").trim();
-  if (!text) return {fail: model + " vacío (" + ((data && data.promptFeedback && data.promptFeedback.blockReason) || (cand && cand.finishReason) || "sin texto") + ")"};
-  return {text, cand};
-}
-
-async function askGemini(it, basePrompt) {
-  const avail = await geminiModels(), last = store.get("gmodel", "");
-  const order = last && avail.includes(last) ? [last, ...avail.filter(m => m !== last)] : avail;
-  const today = new Date().toDateString(), tried = [];
-  /* 1) con búsqueda de Google: se prueba con un solo modelo; si el plan gratis no la incluye, se deja para mañana */
-  if (store.get("gnosearch", "") !== today) {
-    const res = await callGemini(order.find(m => !/lite/.test(m)) || order[0], basePrompt, true);
-    if (res.text) {
-      store.set("gmodel", order[0]);
-      const gm = res.cand.groundingMetadata || {}, src = [], seen = new Set();
-      (gm.groundingChunks || []).forEach(c => { const w = c.web; if (w && w.uri && !seen.has(w.title || w.uri) && src.length < 8) { seen.add(w.title || w.uri); src.push([w.uri, w.title || "Fuente"]); } });
-      return {text: res.text, src, widget: (gm.searchEntryPoint && gm.searchEntryPoint.renderedContent) || "", how: "búsqueda de Google"};
+/* lee la respuesta pegada: tolera el bloque de código, negritas, links markdown y texto alrededor */
+function parseNotesReply(txt, rid) {
+  let t = String(txt || "").replace(/\r/g, "");
+  const i = t.search(/BATEA-NOTAS\s*1/);
+  if (i < 0) throw new Error("No encuentro la línea BATEA-NOTAS 1. Copiá el bloque completo que te devolvió Claude.");
+  t = t.slice(i);
+  const end = t.indexOf("```"); if (end > 0) t = t.slice(0, end);
+  const head = t.split("\n")[0], m = head.match(/\|\s*(\d+)/);
+  if (m && String(m[1]) !== String(rid)) throw new Error("Esta respuesta es de otro disco. Fijate que sea el chat del pedido que copiaste para este.");
+  const clean = x => String(x).replace(/\*\*|__/g, "").replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, "$1").replace(/【[^】]*】/g, "").replace(/[ \t]+$/gm, "").trim();
+  const pick = re => { const mm = t.match(re); return mm ? clean(mm[1]) : ""; };
+  const note = {v: 3, by: "Claude", how: "búsqueda web", at: new Date().toISOString(), title: pick(/^\s*TITULO:\s*(.+)$/mi), lead: pick(/^\s*BAJADA:\s*(.+)$/mi),
+    sec: {}, listen: [], cur: [], src: [], widget: "", raw: ""};
+  const bullets = body => body.split("\n").map(l => l.match(/^\s*[-•*]\s*(.+)$/)).filter(Boolean).map(x => x[1].trim());
+  t.split(/^#{2,3}\s+/m).slice(1).forEach(part => {
+    const nl = part.indexOf("\n"), h = (nl < 0 ? part : part.slice(0, nl)).trim().toLowerCase(), raw = nl < 0 ? "" : part.slice(nl + 1);
+    if (/fuente/.test(h)) {
+      bullets(raw).forEach(l => {
+        const md = l.match(/\[([^\]]+)\]\((https?:[^)\s]+)\)/), url = md ? md[2] : ((l.match(/https?:\/\/\S+/) || [""])[0]).replace(/[)\].,;]+$/, "");
+        let name = md ? md[1] : l.split("|")[0].replace(/https?:\/\/\S+/, "").replace(/[-—:|\s]+$/, "").trim();
+        if (url && note.src.length < 12) note.src.push([url, clean(name) || ""]);
+      });
+      return;
     }
-    tried.push(res.fail);
-    if (res.status === 429) store.set("gnosearch", today);
-  }
-  /* 2) sin búsqueda: Batea trae Wikipedia y se la pasa como fuente */
-  const wiki = await wikiSources(it);
-  const prompt = basePrompt + (wiki.length
-    ? "\n\nFUENTES (Wikipedia). Usá solo esto para los datos concretos:\n\n" + wiki.map((w, i) => "[" + (i + 1) + "] " + w.title + "\n" + w.text).join("\n\n---\n\n")
-    : "\n\nNo hay fuentes disponibles para este disco: escribí solo con los datos de Discogs y, donde no haya material, poné Sin datos confiables.");
-  let quota = 0;
-  for (const model of order) {
-    const res = await callGemini(model, prompt, false);
-    if (res.text) {
-      store.set("gmodel", model);
-      return {text: res.text, src: wiki.map(w => [w.url, "Wikipedia — " + w.title]), widget: "", how: wiki.length ? "Wikipedia" : "los datos de Discogs"};
-    }
-    tried.push(res.fail);
-    if (res.status === 429) quota++;
-  }
-  store.del("gmodels");
-  const err = new Error(quota === order.length ? "Llegaste al límite gratis de Gemini por hoy. Mañana se renueva." : "Gemini no devolvió las notas.");
-  err.detail = tried.join(" · ");
-  throw err;
-}
-
-function parseNotes(res) {
-  const text = res.text;
-  const pick = re => { const m = text.match(re); return m ? m[1].trim().replace(/^\*+|\*+$/g, "") : ""; };
-  const note = {v: 2, by: "Gemini", at: new Date().toISOString(), title: pick(/^\s*\**TITULO:?\**\s*:?\s*(.+)$/mi), lead: pick(/^\s*\**BAJADA:?\**\s*:?\s*(.+)$/mi),
-    sec: {}, listen: [], src: res.src, widget: res.widget, how: res.how, raw: ""};
-  const parts = text.split(/^#{2,3}\s+/m).slice(1);
-  parts.forEach(part => {
-    const nl = part.indexOf("\n"), head = (nl < 0 ? part : part.slice(0, nl)).trim().toLowerCase(), body = (nl < 0 ? "" : part.slice(nl + 1)).replace(/\*\*/g, "").trim();
-    const key = /momento/.test(head) ? "momento" : /hizo/.test(head) ? "hizo" : /contexto/.test(head) ? "contexto" : /escuch/.test(head) ? "listen" : /una m/.test(head) ? "una" : "";
-    if (key === "listen") body.split("\n").forEach(l => {
-      const m = l.match(/^\s*[-•*]\s*(.+)$/); if (!m) return;
-      const f = m[1].split("|").map(x => x.trim());
-      if (f.length >= 3) note.listen.push([f[0], f[1], f.slice(2).join(" | ")]); else note.listen.push(["", "", m[1].trim()]);
+    const body = clean(raw);
+    if (/escuch/.test(h)) bullets(body).forEach(l => {
+      const f = l.split("|").map(x => x.trim());
+      note.listen.push(f.length >= 3 ? [f[0], f[1], f.slice(2).join(" | ")] : ["", "", l]);
     });
-    else if (key) note.sec[key] = body;
+    else if (/curios|una m/.test(h)) note.cur = bullets(body);
+    else if (/momento/.test(h)) note.sec.momento = body;
+    else if (/hizo/.test(h)) note.sec.hizo = body;
+    else if (/contexto/.test(h)) note.sec.contexto = body;
   });
-  if (!note.title && !parts.length) note.raw = text.replace(/\*\*/g, "");
+  if (!note.title && !note.sec.momento && !note.listen.length) throw new Error("El bloque está incompleto. Volvé a copiarlo entero desde Claude.");
   return note;
 }
 
-function generateNotes(it) {
-  if (notesPending[it.rid]) return notesPending[it.rid];
-  const job = (async () => {
-    let rel = relCache[it.rid] || null;
-    if (!rel) { try { rel = cacheRelease(await api("/releases/" + it.rid)); } catch (e) {} }
-    const note = parseNotes(await askGemini(it, notesPrompt(it, rel)));
-    notesCache[it.rid] = note; store.set("notes", notesCache);
-    return note;
-  })();
-  notesPending[it.rid] = job;
-  job.then(() => delete notesPending[it.rid], () => delete notesPending[it.rid]);
-  return job;
-}
-
 const paras = t => String(t || "").split(/\n\s*\n|\n/).map(x => x.trim()).filter(Boolean)
-  .map(x => x === "Sin datos confiables." || x === "Sin datos confiables" ? '<p class="none">Sin datos confiables.</p>' : "<p>" + esc(x) + "</p>").join("");
+  .map(x => /^Sin datos confiables\.?$/i.test(x) ? '<p class="none">Sin datos confiables.</p>' : "<p>" + esc(x) + "</p>").join("");
 function notesHTML(it, n) {
   const sec = (title, body) => body ? '<section class="n-sec"><h3>' + title + "</h3>" + paras(body) + "</section>" : "";
   const host = u => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch (e) { return u; } };
+  const cur = n.cur && n.cur.length ? n.cur : [];
   return '<p class="n-kick">' + esc(it.artist) + " — " + esc(it.title) + "</p>" +
     (n.title ? '<h2 class="n-title">' + esc(n.title) + "</h2>" : '<h2 class="n-title">Notas de tapa</h2>') +
     (n.lead ? '<p class="n-lead">' + esc(n.lead) + "</p>" : "") +
@@ -1097,31 +999,18 @@ function notesHTML(it, n) {
     sec("El momento", n.sec.momento) + sec("Cómo se hizo", n.sec.hizo) + sec("El contexto", n.sec.contexto) +
     (n.listen.length ? '<section class="n-sec"><h3>Escuchá atento</h3><ol class="n-listen">' + n.listen.map(([p, t, x]) =>
       '<li><span class="p">' + esc(p) + "</span><div>" + (t ? "<b>" + esc(t) + "</b>" : "") + esc(x) + "</div></li>").join("") + "</ol></section>" : "") +
-    sec("Una más", n.sec.una) +
+    (cur.length ? '<section class="n-sec"><h3>Curiosidades</h3><ul class="n-cur">' + cur.map(x => "<li>" + esc(x) + "</li>").join("") + "</ul></section>" : sec("Una más", n.sec.una)) +
     (n.src.length ? '<div class="n-src"><h4>Fuentes</h4>' + n.src.map(([u, t]) =>
-      '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(n.by === "Gemini" ? t : host(u) + " — " + t) + "</a>").join("") +
+      '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(t && t !== u ? (n.by === "Claude" ? t + " — " + host(u) : t) : host(u)) + "</a>").join("") +
       (n.widget ? '<iframe class="n-gs" title="Búsquedas en Google" sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="' + esc('<meta name="color-scheme" content="' + (getComputedStyle(document.documentElement).colorScheme.includes("dark") ? "dark" : "light") + '"><style>html,body{margin:0;background:transparent}</style>' + n.widget) + '"></iframe>' : "") + "</div>" : "") +
     '<p class="n-foot">Escritas por ' + esc(n.by || "Claude") + " con " + esc(n.how || "búsqueda web") + " el " + new Date(n.at).toLocaleDateString("es-AR") +
       ". Pueden tener errores. <button type=\"button\" id=\"nRedo\"><span class=\"u\">Volver a escribir</span></button></p>";
 }
 
-function keyFormHTML(intro) {
-  return '<h2 class="n-title" style="margin-top:16px">Notas de tapa</h2>' +
-    '<p class="n-lead">' + esc(intro) + "</p>" +
-    '<p class="hint" style="margin-top:16px">Las escribe Gemini, de Google, con una clave gratis. Se crea en un minuto en aistudio.google.com con tu cuenta personal de Google: “Get API key” → “Create API key”. No hace falta tarjeta. Queda guardada solo en este teléfono. Cada nota se escribe una sola vez y después se lee sin conexión.</p>' +
-    '<input class="field" id="nKey" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIza…" style="margin-top:14px">' +
-    '<p class="n-err" id="nKeyErr" hidden></p>' +
-    '<div class="d-actions"><button class="btn solid big" id="nKeySave">Guardar clave</button></div>';
+async function relFor(it) {
+  if (relCache[it.rid]) return relCache[it.rid];
+  try { return cacheRelease(await api("/releases/" + it.rid)); } catch (e) { return null; }
 }
-function bindKeyForm(onSaved) {
-  $("#nKeySave").addEventListener("click", () => {
-    const v = $("#nKey").value.replace(/\s+/g, ""), err = $("#nKeyErr");
-    /* Google cambió el formato: las claves nuevas empiezan con "AQ." y traen puntos; las viejas con "AIza" */
-    if (!/^[\w.\-]{30,}$/.test(v)) { err.textContent = "Esa no parece una clave de Gemini. Copiala entera desde Google AI Studio."; err.hidden = false; return; }
-    store.set("gkey", v); store.del("gmodel"); toast("Clave guardada en este teléfono"); onSaved();
-  });
-}
-
 function openNotes(iid, force) {
   const it = findAny(iid); if (!it) return;
   if (S.curItem) S.navStack.push(S.curItem);
@@ -1129,32 +1018,45 @@ function openNotes(iid, force) {
   showNotes(it, force);
 }
 function showNotes(it, force) {
-  const frame = html => {
-    sheet(html);
-    $("#sheetLabel").textContent = "Notas de tapa";
-    $("#sheetBack").hidden = !S.navStack.length;
-    $("#sheet").scrollTop = 0;
-  };
-  if (!aiKey()) { frame(keyFormHTML("Lo que hay que saber de " + it.title + " para escucharlo con otros oídos.")); bindKeyForm(() => showNotes(it)); return; }
+  sheet("");
+  $("#sheetLabel").textContent = "Notas de tapa";
+  $("#sheetBack").hidden = !S.navStack.length;
+  $("#sheet").scrollTop = 0;
   const done = notesCache[it.rid];
   if (done && !force) {
-    frame(notesHTML(it, done));
+    $("#sheetBody").innerHTML = notesHTML(it, done);
     $("#nRedo").addEventListener("click", () => showNotes(it, true));
     return;
   }
-  frame('<p class="n-kick">' + esc(it.artist) + " — " + esc(it.title) + '</p><h2 class="n-title">Notas de tapa</h2>' +
-    '<p class="n-wait" data-rid="' + it.rid + '">Investigando y escribiendo. Tarda alrededor de un minuto.</p>' +
-    '<p class="hint" id="nWaitHint" style="margin-top:8px">Podés cerrar esto y seguir escuchando: cuando vuelvas, va a estar lista.</p>');
-  const waiting = () => document.querySelector('.n-wait[data-rid="' + it.rid + '"]');
-  generateNotes(it).then(() => { if (waiting()) showNotes(it); })
-    .catch(e => {
-      const w = waiting(); if (!w) return;
-      if ($("#nWaitHint")) $("#nWaitHint").remove();
-      w.outerHTML = '<p class="n-err">' + esc(e.message) + "</p>" +
-        (e.detail ? '<p class="hint" style="margin-top:6px;font-size:11px;overflow-wrap:anywhere">Detalle: ' + esc(e.detail) + "</p>" : "") +
-        '<div class="d-actions"><button class="btn solid big" id="nRetry">Probar de nuevo</button></div>';
-      $("#nRetry").addEventListener("click", () => showNotes(it, true));
-    });
+  $("#sheetBody").innerHTML =
+    '<p class="n-kick">' + esc(it.artist) + " — " + esc(it.title) + '</p><h2 class="n-title">Notas de tapa</h2>' +
+    '<p class="n-lead">Las escribe Claude como un periodista de rock, investigando en la web. Una sola vez por disco.</p>' +
+    '<section class="n-step"><h3><span>1</span>Copiá el pedido</h3><p class="hint">Lleva el disco, el tracklist, los créditos y las instrucciones.</p>' +
+      '<div class="d-actions" style="margin-top:12px"><button class="btn solid big" id="nCopy">Copiar pedido para Claude</button></div></section>' +
+    '<section class="n-step"><h3><span>2</span>Pegalo en Claude</h3><p class="hint">En un chat nuevo, con la búsqueda web prendida. Cuando termine, tocá copiar en el bloque que empieza con BATEA-NOTAS.</p></section>' +
+    '<section class="n-step"><h3><span>3</span>Pegá la respuesta</h3>' +
+      '<textarea class="field" id="nIn" placeholder="BATEA-NOTAS 1" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>' +
+      '<p class="n-err" id="nErr" hidden></p>' +
+      '<div class="d-actions"><button class="btn accent big" id="nSave">Guardar notas</button></div></section>';
+  $("#nCopy").addEventListener("click", async e => {
+    const b = e.currentTarget; b.disabled = true;
+    const text = notesPrompt(it, await relFor(it));
+    b.disabled = false;
+    try { await navigator.clipboard.writeText(text); toast("Pedido copiado. Pegalo en un chat nuevo con Claude."); b.textContent = "Copiado ✓"; }
+    catch (err) {
+      b.insertAdjacentHTML("afterend", '<p class="hint" style="margin-top:10px">Tocá el texto, seleccioná todo y copialo.</p><textarea class="field" readonly>' + esc(text) + "</textarea>");
+      b.remove();
+    }
+  });
+  $("#nSave").addEventListener("click", () => {
+    const er = $("#nErr");
+    try {
+      const note = parseNotesReply($("#nIn").value, it.rid);
+      notesCache[it.rid] = note; store.set("notes", notesCache);
+      toast("Notas guardadas");
+      showNotes(it);
+    } catch (e) { er.textContent = e.message; er.hidden = false; }
+  });
 }
 
 /* ---------- ficha de un disco de la colección ---------- */
@@ -1464,26 +1366,11 @@ function openSettings() {
         '<button class="btn quiet big" id="sRestore">Restaurar copia</button>' +
       "</div>" +
     "</div>" +
-    '<div class="fsec" style="border-top:1px solid var(--line);margin-top:22px;padding-top:16px">' +
-      '<h3 style="margin:0 0 6px;font-size:15px">Notas de tapa</h3>' +
-      '<p class="hint" style="margin:0 0 12px">' + (aiKey()
-        ? "Tu clave de Gemini está guardada en este teléfono. Tenés " + Object.keys(notesCache).length + " " + plural(Object.keys(notesCache).length, "nota escrita", "notas escritas") + "."
-        : "Para que Gemini escriba las notas de tapa de tus discos, cargá tu clave gratis de Google AI Studio.") + "</p>" +
-      '<div class="d-actions" style="margin-top:0">' +
-        (aiKey() ? '<button class="btn quiet big" id="sKeyDel">Borrar clave de Gemini</button>' : '<button class="btn quiet big" id="sKeyAdd">Cargar clave de Gemini</button>') +
-      "</div>" +
-    "</div>" +
     '<div class="d-actions">' +
       '<button class="btn danger big" id="sOut">Desconectar Discogs</button>' +
     "</div>"
   );
   $("#sSync").onclick = () => { closeSheet(); sync(true); };
-  if ($("#sKeyDel")) $("#sKeyDel").onclick = () => { store.del("gkey"); store.del("gmodel"); toast("Clave de Gemini borrada"); openSettings(); };
-  if ($("#sKeyAdd")) $("#sKeyAdd").onclick = () => {
-    sheet(keyFormHTML("Lo que hay que saber de cada disco, para escucharlo con otros oídos."));
-    $("#sheetLabel").textContent = "Ajustes";
-    bindKeyForm(openSettings);
-  };
   $("#sExport").onclick = exportForClaude;
   $("#sBackup").onclick = copyBackup;
   $("#sRestore").onclick = openRestore;
@@ -1553,14 +1440,14 @@ function moodStaleText() {
 }
 /* huella del contenido de la copia, para saber si cambió algo desde la última */
 function backupSig() {
-  const t = JSON.stringify({m: moodData.map || {}, g: S.over});
+  const t = JSON.stringify({m: moodData.map || {}, g: S.over}) + (Object.keys(notesCache).length ? JSON.stringify(notesCache) : "");
   let h = 5381; for (let i = 0; i < t.length; i++) h = (h * 33 + t.charCodeAt(i)) | 0;
   return String(h >>> 0) + ":" + t.length;
 }
 const markBackup = () => { store.set("lastBackup", new Date().toISOString()); store.set("backupSig", backupSig()); };
 function backupStaleText() {
   const nm = Object.keys(moodData.map || {}).length, ng = Object.keys(S.over).length;
-  if (!nm && !ng) return "";
+  if (!nm && !ng && !Object.keys(notesCache).length) return "";
   if (!store.get("lastBackup", "")) return "Todavía no hiciste ninguna copia";
   const sig = store.get("backupSig", "");
   if (!sig) return "Hacé una copia nueva para quedar al día";
@@ -1571,11 +1458,12 @@ function backupStaleText() {
 function backupStatusText() {
   const nm = Object.keys(moodData.map || {}).length, ng = Object.keys(S.over).length;
   const last = store.get("lastBackup", "");
-  const what = "Tus moods de Claude (" + nm + ") y los géneros que cambiaste a mano (" + ng + ") viven solo en este teléfono. Copiá la copia y guardala en Notas; si algún día se pierden, la pegás en Restaurar.";
+  const nn = Object.keys(notesCache).length;
+  const what = "Tus moods de Claude (" + nm + "), los géneros que cambiaste a mano (" + ng + ")" + (nn ? " y tus notas de tapa (" + nn + ")" : "") + " viven solo en este teléfono. Copiá la copia y guardala en Notas; si algún día se pierden, la pegás en Restaurar.";
   return what + (last ? " Última copia: " + new Date(last).toLocaleDateString("es-AR") + "." : " Todavía no hiciste ninguna.");
 }
 function backupText() {
-  return "BATEA-BACKUP 1\n" + JSON.stringify({at: new Date().toISOString(), moods: moodData.map || {}, genres: S.over});
+  return "BATEA-BACKUP 1\n" + JSON.stringify({at: new Date().toISOString(), moods: moodData.map || {}, genres: S.over, notes: notesCache});
 }
 async function copyBackup() {
   const text = backupText();
@@ -1610,13 +1498,16 @@ function openRestore() {
       if (/^\d+$/.test(rid) && ok.length) moods[rid] = ok;
     });
     Object.entries(data.genres || {}).forEach(([rid, g]) => { if (/^\d+$/.test(rid) && typeof g === "string" && g.trim()) genres[rid] = g.trim().slice(0, 60); });
-    const nm = Object.keys(moods).length, ng = Object.keys(genres).length;
-    if (!nm && !ng) { err("La copia no tiene moods ni géneros para restaurar."); return; }
+    const notes = {};
+    Object.entries(data.notes || {}).forEach(([rid, n]) => { if (/^\d+$/.test(rid) && n && typeof n === "object" && n.sec) notes[rid] = n; });
+    const nm = Object.keys(moods).length, ng = Object.keys(genres).length, nn = Object.keys(notes).length;
+    if (!nm && !ng && !nn) { err("La copia no tiene moods, géneros ni notas para restaurar."); return; }
+    Object.assign(notesCache, notes); store.set("notes", notesCache);
     moodData = {v: 1, at: moodData.at || data.at || new Date().toISOString(), map: Object.assign({}, moodData.map, moods)};
     store.set("moods", moodData);
     S.over = Object.assign({}, S.over, genres); store.set("over", S.over);
     closeSheet(); renderCol(); if (S.tab === "listen") renderListen();
-    toast("Restaurados " + nm + " moods y " + ng + " géneros");
+    toast("Restaurados " + nm + " moods, " + ng + " géneros y " + nn + " notas");
   };
 }
 
