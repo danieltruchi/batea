@@ -404,7 +404,7 @@ textarea.field{min-height:180px;font-family:ui-monospace,Menlo,monospace;font-si
 "use strict";
 
 /* ---------- utilidades ---------- */
-const APP_VERSION = "2.0.9";
+const APP_VERSION = "2.0.10";
 const API = "https://api.discogs.com";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -902,6 +902,7 @@ const NOTES_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash"
 const notesCache = store.get("notes", {});   // release_id -> nota ya escrita
 const notesPending = {};                        // release_id -> pedido en curso
 const aiKey = () => store.get("gkey", "");
+const NOTES_NOSEARCH = "\n\nEsta vez no tenés buscador: al final del pedido van las fuentes que juntó Batea. Todo dato concreto del disco, la banda y los temas tiene que salir de esas fuentes o de los datos de Discogs. Para el contexto de época podés sumar hechos muy conocidos y verificables, sin detalles dudosos. Si las fuentes no alcanzan para una sección, escribí: Sin datos confiables.";
 const NOTES_SYSTEM = [
   "Sos un periodista de rock argentino con muchos años de oficio, de los que escribían notas de tapa y reseñas memorables. Escribís las notas de tapa de un disco para alguien que lo está escuchando ahora mismo en vinilo.",
   "Castellano rioplatense, con voseo. Tono culto y cercano, con ritmo y pulso narrativo. Nada de clichés ni adjetivos vacíos (prohibido: icónico, atemporal, obra maestra, imprescindible, legendario). Sin emojis.",
@@ -951,60 +952,101 @@ async function geminiModels() {
     const list = (data.models || [])
       .filter(m => (m.supportedGenerationMethods || []).includes("generateContent"))
       .map(m => String(m.name || "").replace(/^models\//, ""))
-      .filter(n => /^gemini-/.test(n) && /flash|pro/.test(n) && !/lite|image|tts|audio|live|embed|vision|thinking-exp|robotics|computer|native/.test(n))
-      .sort((x, y) => (/flash/.test(y) - /flash/.test(x)) || (ver(y) - ver(x)) || (/preview|exp/.test(x) - /preview|exp/.test(y)) || (x.length - y.length))
-      .slice(0, 5);
+      .filter(n => /^gemini-/.test(n) && /flash|pro/.test(n) && !/image|tts|audio|live|embed|vision|thinking-exp|robotics|computer|native/.test(n))
+      .sort((x, y) => (/lite/.test(x) - /lite/.test(y)) || (/flash/.test(y) - /flash/.test(x)) || (ver(y) - ver(x)) || (/preview|exp/.test(x) - /preview|exp/.test(y)) || (x.length - y.length))
+      .slice(0, 7);
     if (!list.length) return NOTES_MODELS;
     store.set("gmodels", {k: aiKey().slice(-6), t: Date.now(), list});
     return list;
   } catch (e) { return NOTES_MODELS; }
 }
 
-async function askGemini(prompt) {
+/* ---- Wikipedia como fuente propia (gratis, sin clave): para cuando la búsqueda de Google no está en el plan gratis ---- */
+async function wikiExtract(lang, query, mustMatch) {
+  const base = "https://" + lang + ".wikipedia.org/w/api.php?format=json&origin=*&";
+  try {
+    const sr = await (await fetch(base + "action=query&list=search&srlimit=5&srsearch=" + encodeURIComponent(query))).json();
+    const hits = (sr.query && sr.query.search) || [];
+    const norm = t => String(t).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+    const hit = hits.find(h => !mustMatch || norm(h.title).includes(norm(mustMatch)));
+    if (!hit) return null;
+    const ex = await (await fetch(base + "action=query&prop=extracts&explaintext=1&redirects=1&titles=" + encodeURIComponent(hit.title))).json();
+    const page = Object.values((ex.query && ex.query.pages) || {})[0];
+    if (!page || !page.extract) return null;
+    return {title: page.title, url: "https://" + lang + ".wikipedia.org/wiki/" + encodeURIComponent(page.title.replace(/ /g, "_")), text: page.extract.slice(0, 16000)};
+  } catch (e) { return null; }
+}
+async function wikiSources(it) {
+  const album = String(it.title).replace(/\s*[\(\[][^\)\]]*[\)\]]/g, "").trim();
+  const artist = it.sortArtist ? it.artist : "";
+  const q = (artist + " " + album + " album").trim();
+  const [en, es, ar] = await Promise.all([
+    wikiExtract("en", q, album), wikiExtract("es", q, album),
+    artist ? wikiExtract("en", artist + " band musician", artist) : null
+  ]);
+  return [en, es, ar].filter(Boolean);
+}
+
+async function callGemini(model, prompt, withSearch) {
+  let r;
+  try {
+    r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent", {
+      method: "POST",
+      headers: {"content-type": "application/json", "x-goog-api-key": aiKey()},
+      body: JSON.stringify(Object.assign({
+        systemInstruction: {parts: [{text: NOTES_SYSTEM + (withSearch ? "" : NOTES_NOSEARCH)}]},
+        contents: [{role: "user", parts: [{text: prompt}]}],
+        generationConfig: {temperature: 0.7, maxOutputTokens: 16384}
+      }, withSearch ? {tools: [{google_search: {}}]} : {}))
+    });
+  } catch (e) { throw new Error("No se pudo conectar con Gemini. Revisá la conexión y probá de nuevo."); }
+  let data = null; try { data = await r.json(); } catch (e) {}
+  if (!r.ok) {
+    const msg = (data && data.error && (data.error.message || data.error.status)) || "";
+    if (r.status === 401) throw new Error("Google rechazó tu clave de Gemini. Borrala en AI Studio, creá una nueva y cargala de nuevo en Ajustes.");
+    if (r.status === 400 && /api key/i.test(msg)) throw new Error("Google no aceptó tu clave de Gemini. Cargala de nuevo en Ajustes.");
+    if (r.status === 403) throw new Error("Tu clave de Gemini no tiene permiso. Revisá que la API de Gemini esté habilitada en AI Studio.");
+    return {fail: model + (withSearch ? " (con búsqueda) " : " ") + r.status + (msg ? " " + msg.slice(0, 160) : ""), status: r.status};
+  }
+  const cand = data && data.candidates && data.candidates[0];
+  const text = cand && cand.content && (cand.content.parts || []).filter(x => typeof x.text === "string" && !x.thought).map(x => x.text).join("").trim();
+  if (!text) return {fail: model + " vacío (" + ((data && data.promptFeedback && data.promptFeedback.blockReason) || (cand && cand.finishReason) || "sin texto") + ")"};
+  return {text, cand};
+}
+
+async function askGemini(it, basePrompt) {
   const avail = await geminiModels(), last = store.get("gmodel", "");
   const order = last && avail.includes(last) ? [last, ...avail.filter(m => m !== last)] : avail;
-  const tried = [];   /* qué pasó con cada modelo, para poder diagnosticar */
-  let quota = false;
+  const today = new Date().toDateString(), tried = [];
+  /* 1) con búsqueda de Google: se prueba con un solo modelo; si el plan gratis no la incluye, se deja para mañana */
+  if (store.get("gnosearch", "") !== today) {
+    const res = await callGemini(order.find(m => !/lite/.test(m)) || order[0], basePrompt, true);
+    if (res.text) {
+      store.set("gmodel", order[0]);
+      const gm = res.cand.groundingMetadata || {}, src = [], seen = new Set();
+      (gm.groundingChunks || []).forEach(c => { const w = c.web; if (w && w.uri && !seen.has(w.title || w.uri) && src.length < 8) { seen.add(w.title || w.uri); src.push([w.uri, w.title || "Fuente"]); } });
+      return {text: res.text, src, widget: (gm.searchEntryPoint && gm.searchEntryPoint.renderedContent) || "", how: "búsqueda de Google"};
+    }
+    tried.push(res.fail);
+    if (res.status === 429) store.set("gnosearch", today);
+  }
+  /* 2) sin búsqueda: Batea trae Wikipedia y se la pasa como fuente */
+  const wiki = await wikiSources(it);
+  const prompt = basePrompt + (wiki.length
+    ? "\n\nFUENTES (Wikipedia). Usá solo esto para los datos concretos:\n\n" + wiki.map((w, i) => "[" + (i + 1) + "] " + w.title + "\n" + w.text).join("\n\n---\n\n")
+    : "\n\nNo hay fuentes disponibles para este disco: escribí solo con los datos de Discogs y, donde no haya material, poné Sin datos confiables.");
+  let quota = 0;
   for (const model of order) {
-    let r;
-    try {
-      r = await fetch("https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent", {
-        method: "POST",
-        headers: {"content-type": "application/json", "x-goog-api-key": aiKey()},
-        body: JSON.stringify({
-          systemInstruction: {parts: [{text: NOTES_SYSTEM}]},
-          contents: [{role: "user", parts: [{text: prompt}]}],
-          tools: [{google_search: {}}],
-          generationConfig: {temperature: 0.7, maxOutputTokens: 16384}
-        })
-      });
-    } catch (e) { throw new Error("No se pudo conectar con Gemini. Revisá la conexión y probá de nuevo."); }
-    let data = null; try { data = await r.json(); } catch (e) {}
-    if (!r.ok) {
-      const msg = (data && data.error && (data.error.message || data.error.status)) || "";
-      if (r.status === 401) throw new Error("Google rechazó tu clave de Gemini. Borrala en AI Studio, creá una nueva y cargala de nuevo en Ajustes.");
-      if (r.status === 400 && /api key/i.test(msg)) throw new Error("Google no aceptó tu clave de Gemini. Cargala de nuevo en Ajustes.");
-      if (r.status === 403) throw new Error("Tu clave de Gemini no tiene permiso. Revisá que la API de Gemini esté habilitada en AI Studio.");
-      if (r.status >= 500) { tried.push(model + " " + r.status); continue; }
-      if (r.status === 429) quota = true;
-      tried.push(model + " " + r.status + (msg ? " " + msg.slice(0, 90) : ""));
-      continue;
+    const res = await callGemini(model, prompt, false);
+    if (res.text) {
+      store.set("gmodel", model);
+      return {text: res.text, src: wiki.map(w => [w.url, "Wikipedia — " + w.title]), widget: "", how: wiki.length ? "Wikipedia" : "los datos de Discogs"};
     }
-    const cand = data && data.candidates && data.candidates[0];
-    const text = cand && cand.content && (cand.content.parts || []).filter(x => typeof x.text === "string" && !x.thought).map(x => x.text).join("").trim();
-    if (!text) {
-      const why = (data && data.promptFeedback && data.promptFeedback.blockReason) || (cand && cand.finishReason) || "sin texto";
-      tried.push(model + " vacío (" + why + ")");
-      continue;
-    }
-    store.set("gmodel", model);
-    const gm = cand.groundingMetadata || {};
-    const src = [], seen = new Set();
-    (gm.groundingChunks || []).forEach(c => { const w = c.web; if (w && w.uri && !seen.has(w.title || w.uri) && src.length < 8) { seen.add(w.title || w.uri); src.push([w.uri, w.title || "Fuente"]); } });
-    return {text, src, widget: (gm.searchEntryPoint && gm.searchEntryPoint.renderedContent) || ""};
+    tried.push(res.fail);
+    if (res.status === 429) quota++;
   }
   store.del("gmodels");
-  const err = new Error(quota && tried.every(t => / 429/.test(t)) ? "Llegaste al límite gratis de Gemini por hoy. Mañana se renueva." : "Gemini no devolvió las notas.");
+  const err = new Error(quota === order.length ? "Llegaste al límite gratis de Gemini por hoy. Mañana se renueva." : "Gemini no devolvió las notas.");
   err.detail = tried.join(" · ");
   throw err;
 }
@@ -1013,7 +1055,7 @@ function parseNotes(res) {
   const text = res.text;
   const pick = re => { const m = text.match(re); return m ? m[1].trim().replace(/^\*+|\*+$/g, "") : ""; };
   const note = {v: 2, by: "Gemini", at: new Date().toISOString(), title: pick(/^\s*\**TITULO:?\**\s*:?\s*(.+)$/mi), lead: pick(/^\s*\**BAJADA:?\**\s*:?\s*(.+)$/mi),
-    sec: {}, listen: [], src: res.src, widget: res.widget, raw: ""};
+    sec: {}, listen: [], src: res.src, widget: res.widget, how: res.how, raw: ""};
   const parts = text.split(/^#{2,3}\s+/m).slice(1);
   parts.forEach(part => {
     const nl = part.indexOf("\n"), head = (nl < 0 ? part : part.slice(0, nl)).trim().toLowerCase(), body = (nl < 0 ? "" : part.slice(nl + 1)).replace(/\*\*/g, "").trim();
@@ -1034,7 +1076,7 @@ function generateNotes(it) {
   const job = (async () => {
     let rel = relCache[it.rid] || null;
     if (!rel) { try { rel = cacheRelease(await api("/releases/" + it.rid)); } catch (e) {} }
-    const note = parseNotes(await askGemini(notesPrompt(it, rel)));
+    const note = parseNotes(await askGemini(it, notesPrompt(it, rel)));
     notesCache[it.rid] = note; store.set("notes", notesCache);
     return note;
   })();
@@ -1059,7 +1101,7 @@ function notesHTML(it, n) {
     (n.src.length ? '<div class="n-src"><h4>Fuentes</h4>' + n.src.map(([u, t]) =>
       '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(n.by === "Gemini" ? t : host(u) + " — " + t) + "</a>").join("") +
       (n.widget ? '<iframe class="n-gs" title="Búsquedas en Google" sandbox="allow-popups allow-popups-to-escape-sandbox" srcdoc="' + esc('<meta name="color-scheme" content="' + (getComputedStyle(document.documentElement).colorScheme.includes("dark") ? "dark" : "light") + '"><style>html,body{margin:0;background:transparent}</style>' + n.widget) + '"></iframe>' : "") + "</div>" : "") +
-    '<p class="n-foot">Escritas por ' + esc(n.by || "Claude") + " con búsqueda web el " + new Date(n.at).toLocaleDateString("es-AR") +
+    '<p class="n-foot">Escritas por ' + esc(n.by || "Claude") + " con " + esc(n.how || "búsqueda web") + " el " + new Date(n.at).toLocaleDateString("es-AR") +
       ". Pueden tener errores. <button type=\"button\" id=\"nRedo\"><span class=\"u\">Volver a escribir</span></button></p>";
 }
 
