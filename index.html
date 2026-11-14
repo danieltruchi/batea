@@ -404,7 +404,7 @@ textarea.field{min-height:180px;font-family:ui-monospace,Menlo,monospace;font-si
 "use strict";
 
 /* ---------- utilidades ---------- */
-const APP_VERSION = "2.0.7";
+const APP_VERSION = "2.0.8";
 const API = "https://api.discogs.com";
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -960,6 +960,7 @@ async function askGemini(prompt) {
     let data = null; try { data = await r.json(); } catch (e) {}
     if (!r.ok) {
       const msg = (data && data.error && data.error.message) || "";
+      if (r.status === 401) throw new Error("Google rechazó tu clave de Gemini. Borrala en AI Studio, creá una nueva y cargala de nuevo en Ajustes.");
       if (r.status === 400 && /api key/i.test(msg)) throw new Error("Google no aceptó tu clave de Gemini. Cargala de nuevo en Ajustes.");
       if (r.status === 403) throw new Error("Tu clave de Gemini no tiene permiso. Revisá que la hayas creado en Google AI Studio con tu cuenta personal.");
       /* modelo inexistente o sin cupo gratis: probar el siguiente */
@@ -1044,8 +1045,9 @@ function keyFormHTML(intro) {
 }
 function bindKeyForm(onSaved) {
   $("#nKeySave").addEventListener("click", () => {
-    const v = $("#nKey").value.trim(), err = $("#nKeyErr");
-    if (!/^[\w-]{30,}$/.test(v)) { err.textContent = "Esa no parece una clave de Gemini. Copiala entera desde Google AI Studio."; err.hidden = false; return; }
+    const v = $("#nKey").value.replace(/\s+/g, ""), err = $("#nKeyErr");
+    /* Google cambió el formato: las claves nuevas empiezan con "AQ." y traen puntos; las viejas con "AIza" */
+    if (!/^[\w.\-]{30,}$/.test(v)) { err.textContent = "Esa no parece una clave de Gemini. Copiala entera desde Google AI Studio."; err.hidden = false; return; }
     store.set("gkey", v); store.del("gmodel"); toast("Clave guardada en este teléfono"); onSaved();
   });
 }
